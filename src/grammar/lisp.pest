@@ -1,0 +1,17 @@
+number = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)? }
+symbol = @{
+    "+" | "*" | "/" | "_" | "-" | ">=" | "<=" | ">" | "<" | ASCII_ALPHA+ }
+string = @{ "\"" ~ string_character* ~ "\"" }
+string_character = {
+    !"\""        // if the following text is not a quote
+    ~ ANY         // then consume one character
+}
+
+atom = _{ symbol | number | string | sexpr }
+quoted = { "'" }
+quoted_atom = _{ quoted? ~ atom}
+sexpr = { "(" ~ atom* ~ ")" }
+lisp = { SOI ~ sexpr* ~ EOI }
+
+WHITESPACE = _{ " " | "\t" | "\n" }
+COMMENT = _{ "#" ~ (!"\n" ~ ANY)* }
