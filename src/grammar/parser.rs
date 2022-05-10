@@ -2,14 +2,36 @@ use pest::iterators::Pairs;
 use pest::Parser as PestParser;
 use pest_derive::Parser;
 use slab::Slab;
+use std::cell::RefCell;
 use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
+use std::fmt::{Debug, Formatter, Write};
 use std::str::FromStr;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Cell {
     car: u64,
     cdr: u64,
+}
+
+impl Debug for Cell {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.is_list() {
+            let val = if self.is_number() {
+                format!("Num[{}]", self.as_number())
+            } else if is_symbol_ptr(self.car) {
+                format!("SymbolPtr:[{}]", self.car_ptr())
+            } else {
+                format!("ListPtr:[{}]", self.car_ptr())
+            };
+            f.write_fmt(format_args!("Cell[List {}, next: {}]", val, self.cdr_ptr()))
+        } else {
+            f.write_fmt(format_args!(
+                "Cell{{ car: {}, cdr: {}}}",
+                self.car, self.cdr
+            ))
+        }
+    }
 }
 
 impl Cell {
@@ -18,50 +40,57 @@ impl Cell {
     }
 
     pub fn is_nil(&self) -> bool {
-        self.car == Cell::symbol_name("nil").0 && self.cdr == 0 // by convention nil is the first entry, so its addr is 0
+        self.car == Cell::encode_symbol_name("nil").0 && self.cdr == 0 // by convention nil is the first entry, so its addr is 0
     }
 
     pub fn is_list(&self) -> bool {
         self.cdr & 0b1110 == 0 // CDR is a pointer
     }
 
-    pub fn number(s: &str) -> Self {
-        let truncated = if s.contains(".") {
-            // unimplemented!("decimal numbers");
-            // FIXME For now we'll truncate
-            s.split_once('.').unwrap().0
-        } else {
-            s
-        };
-        let (sign, rest) = if truncated.starts_with("-") {
-            (true, &truncated[1..])
-        } else {
-            (false, truncated)
-        };
-
-        let payload = u64::from_str(rest).unwrap();
-        Cell::from((payload, sign))
-    }
-
     pub fn is_number(&self) -> bool {
         // FIXME Won't take big numbers into account, would need the env
-        self.car == 0 && self.cdr & 0b10 > 0
+        self.car & 0b10 > 0
     }
 
     pub fn as_number(&self) -> i64 {
         // FIXME Naive implementation, won't take big numbers into account
-        (self.cdr >> 4) as i64 * if self.cdr & 0b1000 > 0 { -1 } else { 1 }
+        (self.car >> 4) as i64 * if self.car & 0b1000 > 0 { -1 } else { 1 }
     }
 
     pub fn set_pointer(&mut self, raw_addr: usize) {
         self.cdr = (raw_addr as u64) << 4;
     }
 
-    pub fn is_symbol(&self) -> bool {
-        self.cdr & 0b1110 == 0b1000
+    pub fn car_ptr(&self) -> usize {
+        ptr(self.car)
     }
 
-    pub fn symbol_name(name: &str) -> (u64, &[u8]) {
+    pub fn cdr_ptr(&self) -> usize {
+        ptr(self.cdr)
+    }
+
+    // // NOTE returns only the first 8 characters, for now
+    // pub fn symbol_name(&self) -> &str {
+    //
+    // }
+
+    pub fn decode_symbol_name(val: u64) -> String {
+        let mut buffer: [u8; 8] = [0; 8];
+        let mut buffer_len = 8;
+        for shift in 0..8 {
+            let char_byte = (val >> (8 * shift) & 0xff) as u8;
+            buffer[shift] = char_byte as u8;
+
+            if char_byte == 0 {
+                buffer_len = shift;
+                break;
+            }
+        }
+
+        String::from_utf8(buffer[0..buffer_len].to_vec()).unwrap_or(String::from("***ERR***"))
+    }
+
+    pub fn encode_symbol_name(name: &str) -> (u64, &[u8]) {
         let mut result = 0_u64;
         let byte_representation = name.as_bytes();
         for (idx, b) in byte_representation[0..min(8, byte_representation.len())]
@@ -80,25 +109,27 @@ impl Cell {
             },
         )
     }
-
-    pub fn ptr(&self) -> usize {
-        if self.cdr & 0b1110 != 0 {
-            panic!("Not a pointer!");
-        }
-
-        (self.cdr >> 4) as usize
-    }
 }
 
-impl From<(u64, bool)> for Cell {
-    fn from((payload, sign_bit): (u64, bool)) -> Self {
-        let sign_bit = if sign_bit { 0b1000 } else { 0b0000 };
-        let payload = payload << 4 | sign_bit | 0b010;
-        Cell {
-            car: 0,
-            cdr: payload,
-        }
+pub fn is_symbol_ptr(val: u64) -> bool {
+    val & 0b1110 == 0b1000
+}
+
+pub fn is_pointer(val: u64) -> bool {
+    val & 0b0110 == 0
+}
+
+pub fn ptr(val: u64) -> usize {
+    if !is_pointer(val) {
+        panic!("Not a pointer!");
     }
+
+    (val >> 4) as usize
+}
+
+fn number_pointer(payload: u64, sign: bool) -> u64 {
+    let sign_bit = if sign { 0b1000 } else { 0b0000 };
+    payload << 4 | sign_bit | 0b010
 }
 
 #[derive(Parser)]
@@ -106,31 +137,38 @@ impl From<(u64, bool)> for Cell {
 pub struct LispGrammar;
 
 enum Record {
-    Function(Box<dyn Fn(&Cell, &LispEnv) -> (Cell, bool)>),
+    /// Returns the index in memory where the result is stored
+    Function(Box<dyn Fn(usize, &LispEnv) -> usize>),
     Variable(Cell),
 }
 
+type Memory = RefCell<Slab<Cell>>;
+
 pub struct LispEnv {
-    memory: Slab<Cell>,
+    memory: Memory,
     nil_key: u64,
+    /// Initially an anonymous symbol with a nil value, should receive all the internal symbols of
+    /// created during the environment lifetime.
+    internal_symbols_key: u64,
     /// Function pointer returns whether the cell should be added to the heap or is a copy
     functions: HashMap<String, Record>,
     call_stack: VecDeque<String>,
 }
 
 impl LispEnv {
-    fn allocate_nil(&mut self) -> usize {
+    fn allocate_nil(&self) -> usize {
         let nil_key = {
-            let nil_entry = self.memory.vacant_entry();
+            let mut memory = self.memory.borrow_mut();
+            let nil_entry = memory.vacant_entry();
             let nil_key = nil_entry.key();
             let nil = Cell {
-                car: Cell::symbol_name("nil").0,
+                car: Cell::encode_symbol_name("nil").0,
                 cdr: nil_key as u64,
             };
             nil_entry.insert(nil);
             nil_key
         };
-        self.memory.insert(Cell {
+        self.memory.borrow_mut().insert(Cell {
             car: nil_key as u64,
             cdr: nil_key as u64,
         });
@@ -138,119 +176,179 @@ impl LispEnv {
         nil_key
     }
 
-    fn allocate_symbol(&mut self, name: Option<&str>, value_ptr: usize) -> usize {
+    /// Returns a symbol pointer
+    fn allocate_symbol(&self, name: Option<&str>, value_ptr: usize) -> u64 {
         let cell_key = self.allocate_empty_cell();
-        let cell_tail_key = name.map(|name| {
-            let cell_tail_key = self.allocate_empty_cell();
-            let cell_tail = &mut self.memory[cell_tail_key];
-
-            let (name_fragment, rest) = Cell::symbol_name(name);
+        let cell = &mut self.memory.borrow_mut()[cell_key];
+        if let Some(name) = name {
+            let (name_fragment, rest) = Cell::encode_symbol_name(name);
             if rest.is_empty() {
-                cell_tail.cdr = name_fragment;
+                cell.car = name_fragment;
             } else {
                 unimplemented!("name is big number");
             }
-            cell_tail_key
-        });
-        let cell = &mut self.memory[cell_key];
-        cell.cdr = (value_ptr as u64) << 4 | 0b1000;
-        cell.car = cell_tail_key.unwrap_or(0) as u64;
+        };
+        // let cell = &mut self.memory.borrow_mut()[cell_key];
+        // cell.cdr = (value_ptr as u64) << 4 | 0b1000;
+        // cell.car = cell_tail_key.unwrap_or(0) as u64;
+        // call.cdr = value_ptr;
 
-        cell_key
+        (cell_key as u64) << 4 | 0b1000
     }
 
-    fn allocate_empty_cell(&mut self) -> usize {
-        self.memory.insert(Cell::empty())
+    fn allocate_empty_cell(&self) -> usize {
+        self.memory.borrow_mut().insert(Cell::empty())
     }
 
-    fn insert_cell(&mut self, cell: Cell) -> usize {
-        self.memory.insert(cell)
+    fn encode_number(&self, s: &str) -> u64 {
+        let truncated = if s.contains(".") {
+            // unimplemented!("decimal numbers");
+            // FIXME For now we'll truncate
+            s.split_once('.').unwrap().0
+        } else {
+            s
+        };
+        let (sign, rest) = if truncated.starts_with("-") {
+            (true, &truncated[1..])
+        } else {
+            (false, truncated)
+        };
+
+        let payload = u64::from_str(rest).unwrap();
+
+        number_pointer(payload, sign)
+    }
+
+    fn insert_cell(&self, cell: Cell) -> usize {
+        self.memory.borrow_mut().insert(cell)
     }
 
     fn print_memory(&self) {
-        for (idx, cell) in &self.memory {
+        for (idx, cell) in &*self.memory.borrow() {
             println!("{}: {:?}", idx, cell);
         }
     }
 
     pub fn new() -> Self {
         let mut env = Self {
-            memory: Slab::<Cell>::with_capacity(1024),
+            memory: RefCell::new(Slab::<Cell>::with_capacity(1024)),
             nil_key: 0,
+            internal_symbols_key: 0,
             functions: HashMap::new(),
             call_stack: VecDeque::new(),
         };
         env.nil_key = env.allocate_nil() as u64;
+        env.internal_symbols_key = env.allocate_symbol(None, env.nil_key as usize) as u64;
         env.functions.insert(
             "+".to_string(),
-            Record::Function(Box::new(|args, env| {
-                let mut sum = env.memory[args.car as usize].as_number();
-                let mut current_cell = &env.memory[args.ptr()];
-                while !current_cell.is_nil() {
-                    println!("+ current cell: {:?}", current_cell);
-                    let value_cell = &env.memory[current_cell.car as usize];
-                    println!("Value cell: {:?}", value_cell);
-                    if !value_cell.is_number() {
-                        unimplemented!("handle type error");
+            Record::Function(Box::new(|args_idx, env| {
+                let sum = {
+                    let memory = env.memory.borrow();
+
+                    println!("Arg idx: {}", args_idx);
+                    let args = &memory[args_idx];
+                    let mut sum = args.as_number();
+                    let mut current_cell = args;
+
+                    while current_cell.cdr != 0 {
+                        println!("+ current cell: {:?}", current_cell);
+                        let next_cell = &memory[current_cell.cdr_ptr()];
+                        println!("Next cell: {:?}", next_cell);
+                        if !next_cell.is_number() {
+                            unimplemented!("handle type error");
+                        }
+
+                        sum += next_cell.as_number(); // FIXME Proper conversion with sign bit!
+                        println!("current sum: {}", sum);
+
+                        current_cell = &next_cell;
                     }
 
-                    sum += (value_cell.cdr >> 4) as i64; // FIXME Proper conversion with sign bit!
-                    println!("current sum: {}", sum);
-                    current_cell = &env.memory[current_cell.ptr()];
-                }
-                (Cell::from((sum.abs() as u64, sum < 0)), true)
+                    sum
+                };
+                env.insert_cell(Cell {
+                    car: number_pointer(sum.abs() as u64, sum < 0),
+                    cdr: 0,
+                })
+                // env.allocate_symbol(None, env.nil_key as usize) as u64;
+                // let memory = &mut env.memory.borrow_mut();
+                // memory.a
+                // (Cell::from((sum.abs() as u64, sum < 0)), true)
             })),
         );
         env.functions.insert(
             "*".to_string(),
-            Record::Function(Box::new(|args, env| {
-                let mut current_cell = args;
-                let mut result = env.memory[args.car as usize].as_number();
-                let mut current_cell = &env.memory[args.ptr()];
-                while !current_cell.is_nil() {
-                    println!("* current cell: {:?}", current_cell);
-                    // FIXME Get the car as the initial result (SAME FOR ADD)
-                    let value_cell = &env.memory[current_cell.car as usize];
-                    println!("Value cell: {:?}", value_cell);
-                    if !value_cell.is_number() {
-                        unimplemented!("handle type error: {:?}", value_cell);
+            Record::Function(Box::new(|args_idx, env| {
+                let result = {
+                    let memory = env.memory.borrow();
+
+                    let args = &memory[args_idx];
+                    let mut result = args.as_number();
+                    let mut current_cell = args;
+                    while current_cell.cdr != 0 {
+                        println!("* current cell: {:?}", current_cell);
+                        let next_cell = &memory[current_cell.cdr_ptr()];
+                        println!("Next cell: {:?}", next_cell);
+                        if !next_cell.is_number() {
+                            unimplemented!("handle type error");
+                        }
+
+                        result *= next_cell.as_number(); // FIXME Proper conversion with sign bit!
+                        println!("current result: {}", result);
+
+                        current_cell = &next_cell;
                     }
 
-                    result *= (value_cell.cdr >> 4) as i64; // FIXME Proper conversion with sign bit!
-                    println!("current result: {}", result);
-                    current_cell = &env.memory[current_cell.ptr()];
-                }
-                (Cell::from((result.abs() as u64, result < 0)), true)
+                    result
+                };
+                env.insert_cell(Cell {
+                    car: number_pointer(result.abs() as u64, result < 0),
+                    cdr: 0,
+                })
             })),
         );
         env.functions.insert(
             "def".to_string(),
-            Record::Function(Box::new(|args, env| {
-                println!("arg cell: {:?}", args);
-                let symbol_cell = &env.memory[args.car as usize];
+            Record::Function(Box::new(|args_idx, env| {
+                let (value_head, symbol_cell_idx) = {
+                    let memory = env.memory.borrow();
+                    let args = &memory[args_idx];
+                    println!("arg cell: {:?}", args);
+
+                    (memory[args.cdr_ptr()].car, args.car_ptr())
+                };
+
+                let memory = &mut env.memory.borrow_mut();
+                let mut symbol_cell = &mut memory[symbol_cell_idx];
                 println!("Symbol cell: {:?}", symbol_cell);
-                if !symbol_cell.is_symbol() {
-                    panic!("NOT A SYMBOL");
-                }
+                symbol_cell.cdr = value_head;
+                println!(
+                    "Updated symbol cell {}: {}",
+                    Cell::decode_symbol_name(symbol_cell.car),
+                    symbol_cell.cdr
+                );
+                // TODO Super rough conversion
+                // if !symbol_cell.is_symbol_ptr() {
+                //     panic!("NOT A SYMBOL");
+                // }
 
-                let symbol_name_cell = &env.memory[symbol_cell.car as usize];
-                let first_letter = char::from((symbol_name_cell.cdr & 0xff) as u8);
-                println!("First letter: {}", first_letter);
+                // FIXME We assume for now that the variable name is less than 8 characters
+                // let first_letter = char::from((symbol_cell.car & 0xff) as u8);
+                // println!("First letter: {}", first_letter);
 
-                let list_cell = &env.memory[args.ptr()];
-                let value_cell = &env.memory[list_cell.car as usize];
-                let value = value_cell.as_number();
-                println!("Value to be assigned: {}", value);
+                // We reuse the symbol without a value to point to the value cell, and we then add
+                // the symbol to the index of internal symbols (currently as a list)
+                // symbol_cell.cdr = arg_list_cell_car << 4 | 0b1000;
 
-                // env.allocate_symbol()
-                // FIXME
-                todo!("LispEnv should actually be &mut")
+                // todo!("Insert the symbol into the internal index/registry!")
+
+                symbol_cell_idx
             })),
         );
-        env.functions.insert(
-            "pi".to_string(),
-            Record::Variable(Cell::number("3.141592653589793")),
-        );
+        // env.functions.insert(
+        //     "pi".to_string(),
+        //     Record::Variable(Cell::number("3.141592653589793")),
+        // );
         // FIXME `list` is probably not a primitive, but is used now in order to get a consistent
         // call stack
         // env.functions.insert(
@@ -267,67 +365,65 @@ impl LispEnv {
         let mut last_cell_ptr = None;
 
         for atom in atoms {
-            let result_cell_key = match atom.as_rule() {
-                Rule::number => {
-                    // if idx == 0 {
-                    //     self.call_stack.push_back("list".to_string());
-                    // }
-                    Some(self.insert_cell(Cell::number(atom.as_str())))
-                }
+            let cell_value = match atom.as_rule() {
+                Rule::number => self.encode_number(atom.as_str()),
                 Rule::symbol => {
                     if self.functions.contains_key(atom.as_str()) {
                         println!("Pushing op {}", atom.as_str());
                         self.call_stack.push_back(atom.as_str().to_string());
-                        None
+                        continue;
                     } else {
-                        let cell_idx =
-                            self.allocate_symbol(Some(atom.as_str()), self.nil_key as usize);
-                        println!("symbol cell: {}", cell_idx);
-                        Some(cell_idx)
+                        self.allocate_symbol(Some(atom.as_str()), self.nil_key as usize)
                     }
                 }
-                Rule::sexpr => Some(self.eval_list(atom.into_inner())?),
+                Rule::sexpr => (self.eval_list(atom.into_inner())? as u64) << 4,
                 _ => unimplemented!(),
             };
-            if let Some(res_key) = result_cell_key {
-                let list_cell_key = self.allocate_empty_cell();
-                self.memory[list_cell_key].car = res_key as u64;
-                if let Some(list_ptr) = last_cell_ptr {
-                    self.memory[list_ptr].set_pointer(list_cell_key);
-                }
-                last_cell_ptr = Some(list_cell_key);
 
-                if list_head.is_none() {
-                    list_head = Some(list_cell_key);
-                }
+            let new_cell_idx = if is_pointer(cell_value) && !is_symbol_ptr(cell_value) {
+                cell_value as usize >> 4 // we're reusing the list/symbol?
+            } else {
+                self.insert_cell(Cell {
+                    car: cell_value,
+                    cdr: 0,
+                })
+            };
+
+            if list_head.is_none() {
+                list_head = Some(new_cell_idx);
             }
+            if let Some(last_cell_ptr) = last_cell_ptr {
+                self.memory.borrow_mut()[last_cell_ptr].set_pointer(new_cell_idx);
+            }
+            last_cell_ptr = Some(new_cell_idx);
         }
 
-        // Complete the list with nil
-        if let Some(list_ptr) = last_cell_ptr {
-            let last_cell = &mut self.memory[list_ptr];
-            last_cell.cdr = self.nil_key as u64;
-        } else {
-            list_head = Some(self.nil_key as usize);
+        if list_head.is_none() {
+            list_head = Some(0); // empty list, pointing to nil
         }
 
-        let mut list_head = list_head.unwrap();
-        println!("List head: {:?}, {:?}", list_head, &self.memory[list_head]);
+        println!(
+            "List head: {:?}, {:?}",
+            list_head,
+            &self.memory.borrow()[list_head.unwrap()]
+        );
 
         if let Some(fn_name) = self.call_stack.pop_front() {
             println!("About to apply record {}", fn_name);
             self.print_memory();
-            let (result, new_cell) = match &self.functions[&fn_name] {
-                Record::Function(function) => function(&self.memory[list_head], &self),
-                Record::Variable(val) => (val.to_owned(), true),
-            };
-            println!("{:?}", result);
-            if new_cell {
-                list_head = self.insert_cell(result);
-            }
+            list_head = Some(match &self.functions[&fn_name] {
+                Record::Function(function) => function(list_head.unwrap(), &self),
+                Record::Variable(val) => self.insert_cell(val.to_owned()),
+            });
+            self.print_memory();
+            println!("New list head: {:?}", list_head);
+
+            // if new_cell {
+            //     list_head = self.insert_cell(result);
+            // }
         }
 
-        Ok(list_head)
+        Ok(list_head.unwrap())
     }
 
     pub fn eval(&mut self, input: &str) -> Result<Cell, pest::error::Error<Rule>> {
@@ -345,7 +441,7 @@ impl LispEnv {
             let atoms = statement.into_inner();
             let list_head = self.eval_list(atoms)?;
 
-            result = self.memory[list_head].to_owned();
+            result = self.memory.borrow()[list_head].to_owned();
         }
 
         Ok(result)
@@ -354,7 +450,7 @@ impl LispEnv {
 
 #[cfg(test)]
 mod tests {
-    use crate::grammar::parser::{Cell, LispEnv};
+    use crate::grammar::parser::{is_symbol_ptr, ptr, Cell, LispEnv};
 
     #[test]
     fn parse_empty_list() {
@@ -363,7 +459,7 @@ mod tests {
         assert!(result.is_ok());
 
         let list = result.unwrap();
-        assert_eq!(Cell::symbol_name("nil").0, list.car);
+        assert_eq!(Cell::encode_symbol_name("nil").0, list.car);
         assert_eq!(env.nil_key, list.cdr);
     }
 
@@ -380,16 +476,26 @@ mod tests {
         let result = env.eval("(a)");
         assert!(result.is_ok());
 
+        env.print_memory();
+
         let result = result.unwrap();
         assert!(result.is_list());
+        assert!(is_symbol_ptr(result.car));
 
-        let first_element = &env.memory[result.car as usize];
-        assert!(first_element.is_symbol());
+        let first_element = &env.memory.borrow()[result.car_ptr()];
         assert!(!first_element.is_number());
+        assert_eq!("a", Cell::decode_symbol_name(first_element.car));
+    }
 
-        let name_cell = &env.memory[first_element.car as usize];
-        let first_letter = char::from((name_cell.cdr & 0xff) as u8);
-        assert_eq!('a', first_letter);
+    #[test]
+    fn encode_short_symbol_name() {
+        let (val, _) = Cell::encode_symbol_name("a");
+        assert_eq!(97_u64, val);
+    }
+
+    #[test]
+    fn decode_short_symbol_name() {
+        assert_eq!("a", Cell::decode_symbol_name(97_u64));
     }
 
     // #[test]
@@ -400,50 +506,68 @@ mod tests {
     #[test]
     fn parse_list_of_single_short_number() {
         let mut env = LispEnv::new();
+        let original_memory_size = env.memory.borrow().len();
         let result = env.eval("(1)");
         assert!(result.is_ok());
+        assert_eq!(original_memory_size + 1, env.memory.borrow().len());
 
         let result = result.unwrap();
         assert!(result.is_list());
 
-        let first_element = &env.memory[result.car as usize];
-        assert_eq!(Cell::number("1"), *first_element);
-        assert!(env.memory[result.cdr as usize].is_nil());
+        env.print_memory();
+        assert_eq!(env.encode_number("1") as u64, result.car);
+        assert_eq!(0, result.cdr);
     }
 
     #[test]
     fn parse_list_of_two_numbers() {
         let mut env = LispEnv::new();
+        let original_memory_size = env.memory.borrow().len();
         let result = env.eval("(1 2)");
         assert!(result.is_ok());
+        assert_eq!(original_memory_size + 2, env.memory.borrow().len());
 
+        env.print_memory();
         let list_head = result.unwrap();
         assert!(list_head.is_list());
 
-        let first_element = &env.memory[list_head.car as usize];
-        assert_eq!(Cell::number("1"), *first_element);
+        assert_eq!(env.encode_number("1") as u64, list_head.car);
 
-        let list_tail = &env.memory[list_head.ptr()];
+        let list_tail = &env.memory.borrow()[list_head.cdr_ptr()];
         assert!(list_tail.is_list());
 
-        let second_element = &env.memory[list_tail.car as usize];
-        assert_eq!(Cell::number("2"), *second_element);
+        assert_eq!(env.encode_number("2") as u64, list_tail.car);
         assert_eq!(list_tail.cdr, 0);
     }
 
     #[test]
     fn parse_simple_operation() {
         let mut env = LispEnv::new();
+        let original_memory_size = env.memory.borrow().len();
         let result = env.eval("(+ 1 2)");
         assert!(result.is_ok());
+        assert_eq!(original_memory_size + 3, env.memory.borrow().len());
+        // the 2 values in the operation + the result
 
         let result = result.unwrap();
+        println!("{:?}", result);
         assert!(result.is_number());
         assert_eq!(3, result.as_number());
     }
 
     #[test]
-    fn parse_nested_operation() {
+    fn parse_nested_operation_1() {
+        let mut env = LispEnv::new();
+        let result = env.eval("(+ (+ 1 2) 3)");
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert!(result.is_number());
+        assert_eq!(6, result.as_number());
+    }
+
+    #[test]
+    fn parse_nested_operation_2() {
         let mut env = LispEnv::new();
         let result = env.eval("(+ (+ 1 2) (+ 3 (+ 4 5 6)))");
         assert!(result.is_ok());
@@ -456,12 +580,27 @@ mod tests {
     #[test]
     fn parse_multiplication() {
         let mut env = LispEnv::new();
+        let original_memory_size = env.memory.borrow().len();
         let result = env.eval("(* 2 3 6)");
         assert!(result.is_ok());
+        assert_eq!(original_memory_size + 4, env.memory.borrow().len());
+        // the 3 values in the operation + the result
 
         let result = result.unwrap();
         assert!(result.is_number());
         assert_eq!(36, result.as_number());
+    }
+
+    #[test]
+    fn parse_very_small_program() {
+        let mut env = LispEnv::new();
+        let result = env.eval("(def r 10)\n(r)");
+        assert!(result.is_ok());
+
+        env.print_memory();
+        let result = result.unwrap();
+        assert!(result.is_number());
+        assert_eq!(10, result.as_number());
     }
 
     #[test]
@@ -488,12 +627,10 @@ mod tests {
     }
 
     #[test]
-    fn encode_short_number() {
-        let number = Cell::number("1");
-        assert_eq!(0, number.car);
-        assert_eq!(0b10010, number.cdr);
-        assert!(number.is_number());
-        assert!(!number.is_symbol());
+    fn encode_short_number_in_returned_pointer() {
+        let env = LispEnv::new();
+        let short_number = env.encode_number("1");
+        assert_eq!(0b10010, short_number);
     }
 
     #[test]
@@ -505,14 +642,14 @@ mod tests {
 
     #[test]
     fn encode_symbol_name() {
-        let encoded = Cell::symbol_name("nil").0;
+        let encoded = Cell::encode_symbol_name("nil").0;
         let expected = 0_u64 | (b'l' as u64) << 2 | (b'i' as u64) << 1 | (b'n' as u64);
         assert_eq!(expected, encoded);
     }
 
     #[test]
     fn encode_long_symbol_name() {
-        let (encoded, rest) = Cell::symbol_name("abcdefghijklmnop");
+        let (encoded, rest) = Cell::encode_symbol_name("abcdefghijklmnop");
         let expected = 0_u64
             | (b'a' as u64)
             | (b'b' as u64) << 1
