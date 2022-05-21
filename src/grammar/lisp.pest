@@ -8,10 +8,10 @@ string_character = {
 }
 
 atom = _{ symbol | number | string | sexpr }
-quoted = { "'" }
-quoted_atom = _{ quoted? ~ atom}
-sexpr = { "(" ~ atom* ~ ")" }
-lisp = { SOI ~ sexpr* ~ EOI }
+quoted_atom = { "'"  ~ atom}
+atom_type = _{ quoted_atom | atom }
+sexpr = { "(" ~ atom_type* ~ ")" }
+lisp = { SOI ~ atom_type* ~ EOI }
 
 WHITESPACE = _{ " " | "\t" | "\n" }
 COMMENT = _{ "#" ~ (!"\n" ~ ANY)* }
