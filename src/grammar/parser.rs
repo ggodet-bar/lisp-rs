@@ -466,7 +466,49 @@ impl LispEnv {
         );
         env.functions.insert(
             "put".to_string(),
-            Box::new(|args_idx, env| unimplemented!("put function")),
+            Box::new(|args_idx, env| {
+                let memory = env.memory.borrow();
+                let args = &memory[args_idx];
+                println!("arg cell: {:?}", args);
+                unimplemented!("put function")
+            }),
+        );
+        env.functions.insert(
+            "quote".to_string(),
+            Box::new(|args_idx, env| {
+                let (first_arg_car, first_arg_cdr) = {
+                    let first_arg_slot = &env.memory.borrow()[args_idx];
+                    (first_arg_slot.car, first_arg_slot.cdr)
+                };
+                let symbol_replacement = if is_symbol_ptr(first_arg_car) && first_arg_cdr == 0 {
+                    // (quote a) -> arg: (a) -> should return a (convert the list to the symbol itself)
+                    let symbol_cell = &env.memory.borrow()[ptr(first_arg_car)];
+                    Some((symbol_cell.car, symbol_cell.cdr))
+                } else {
+                    None
+                };
+                if let Some((car, cdr)) = symbol_replacement {
+                    let mut arg_slot = &mut env.memory.borrow_mut()[ptr(first_arg_car)];
+                    arg_slot.car = car;
+                    arg_slot.cdr = cdr;
+
+                    println!("Replaced argument list with {:?}", arg_slot);
+
+                    (args_idx as u64) << 4
+                } else {
+                    // We reintroduce a quote argument at the head of the list
+                    let quote_cell_ptr = env.allocate_symbol(Some("quote"), 0);
+                    let quote_slot_idx = env.allocate_empty_cell();
+                    println!("Reinserting a quote into the arg list head");
+                    {
+                        let mut quote_slot = &mut env.memory.borrow_mut()[quote_slot_idx];
+                        quote_slot.car = quote_cell_ptr;
+                        quote_slot.set_cdr_pointer(args_idx);
+
+                        (quote_slot_idx as u64) << 4
+                    }
+                }
+            }),
         );
         env.append_property(
             env.internal_symbols_key,
@@ -499,7 +541,12 @@ impl LispEnv {
             }
             Rule::sexpr => Some(self.eval_list(atom.into_inner())? as u64),
             Rule::quoted_atom => {
-                Some(self.allocate_symbol(Some(atom.into_inner().as_str()), self.nil_key))
+                let inner_str = atom.into_inner().as_str();
+                println!("Quoted symbol name: {}", inner_str);
+
+                // TODO Transform to a list with a quote symbol
+
+                Some(self.allocate_symbol(Some(inner_str), self.nil_key))
             }
             _ => unimplemented!("Rule: {}", atom.as_str()),
         };
@@ -615,8 +662,59 @@ mod tests {
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        env.print_memory();
         assert!(is_symbol_ptr(result));
+
+        let symbol_cell = &env.memory.borrow()[ptr(result)];
+        assert_eq!("a", Cell::decode_symbol_name(symbol_cell.car));
+        assert_eq!(0, symbol_cell.cdr);
+    }
+
+    #[test]
+    fn parse_nested_quoted_symbol() {
+        let mut env = LispEnv::new();
+        let result = env.eval("(quote (quote (quote a)))");
+        assert!(result.is_ok());
+
+        // expecting `('('(a)))`
+
+        let result = result.unwrap();
+        assert!(is_pointer(result));
+
+        env.print_memory();
+
+        let root_cell = &env.memory.borrow()[ptr(result)];
+        println!("Root cell: {:?}", root_cell);
+        assert!(is_symbol_ptr(root_cell.car));
+        assert_ne!(0, root_cell.cdr);
+
+        let first_cell = &env.memory.borrow()[ptr(root_cell.car)];
+        assert_eq!("quote", Cell::decode_symbol_name(first_cell.car));
+
+        let second_slot = &env.memory.borrow()[ptr(root_cell.cdr)];
+        assert!(!is_symbol_ptr(second_slot.car));
+        assert_eq!(0, second_slot.cdr);
+
+        let second_list = &env.memory.borrow()[ptr(second_slot.car)];
+        assert!(is_symbol_ptr(second_list.car));
+        assert_ne!(0, second_list.cdr);
+
+        let second_cell = &env.memory.borrow()[ptr(second_list.car)];
+        // actually as part of the second list
+        assert_eq!("quote", Cell::decode_symbol_name(second_cell.car));
+        assert_eq!(0, second_cell.cdr);
+
+        let third_slot = &env.memory.borrow()[ptr(second_list.cdr)];
+        assert!(!is_symbol_ptr(third_slot.car));
+        assert_eq!(0, third_slot.cdr);
+
+        let third_list = &env.memory.borrow()[ptr(third_slot.car)];
+        assert!(is_symbol_ptr(third_list.car));
+        assert_eq!(0, third_list.cdr);
+
+        let third_cell = &env.memory.borrow()[ptr(third_list.car)];
+        // actually as part of the third list
+        assert_eq!("a", Cell::decode_symbol_name(third_cell.car));
+        assert_eq!(0, third_cell.cdr);
     }
 
     #[test]
