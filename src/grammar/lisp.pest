@@ -1,6 +1,6 @@
 number = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)? }
 symbol = @{
-    "+" | "*" | "/" | "_" | "-" | ">=" | "<=" | ">" | "<" | ASCII_ALPHA+ }
+    "+" | "*" | "/" | "_" | "-" | ">=" | "<=" | ">" | "<" | "=" | "==" | ASCII_ALPHA+ }
 string = @{ "\"" ~ string_character* ~ "\"" }
 string_character = {
     !"\""        // if the following text is not a quote
