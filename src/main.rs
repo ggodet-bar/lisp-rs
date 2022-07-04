@@ -2,7 +2,7 @@ use clap::{ArgGroup, Parser};
 use filesystem::{FileSystem, OsFileSystem};
 use std::path::PathBuf;
 
-mod grammar;
+mod lisprs;
 
 #[derive(err_derive::Error, Debug)]
 enum Error {
@@ -10,7 +10,7 @@ enum Error {
     Io(#[error(from)] std::io::Error),
 
     #[error(display = "Failed to parse Lisp expr: {:?}", _0)]
-    Parsing(#[error(from)] pest::error::Error<grammar::parser::Rule>),
+    Parsing(#[error(from)] pest::error::Error<lisprs::parser::Rule>),
 }
 
 #[derive(Parser, Debug)]
@@ -33,9 +33,9 @@ fn main() -> Result<(), Error> {
         args.eval.unwrap()
     };
 
-    let mut env = grammar::parser::LispEnv::new();
+    let mut env = lisprs::LispEnv::new();
 
-    env.eval(&expr_str)?;
+    env.parse(&expr_str)?;
 
     Ok(())
 }

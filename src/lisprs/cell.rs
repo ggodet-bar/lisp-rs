@@ -1,4 +1,4 @@
-use crate::grammar::util::{as_number, is_number, is_symbol_ptr, ptr};
+use crate::lisprs::util::{as_number, is_number, is_symbol_ptr, ptr};
 use std::cmp::min;
 use std::fmt::{Debug, Formatter};
 
