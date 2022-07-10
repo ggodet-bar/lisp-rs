@@ -23,6 +23,10 @@ pub fn ptr(val: u64) -> usize {
     (val >> 4) as usize
 }
 
+pub fn as_ptr(idx: usize) -> u64 {
+    (idx as u64) << 4
+}
+
 pub fn number_pointer(payload: i64) -> u64 {
     let sign_bit = if payload < 0 { 0b1000 } else { 0b0000 };
     (payload.abs() as u64) << 4 | sign_bit | 0b010

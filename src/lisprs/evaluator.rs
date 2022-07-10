@@ -1,5 +1,5 @@
 use crate::lisprs::cell::Cell;
-use crate::lisprs::util::{is_number, is_pointer, is_symbol_ptr, ptr};
+use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
 
 #[derive(PartialEq, Debug)]
@@ -7,25 +7,63 @@ pub struct Error;
 
 impl LispEnv {
     pub(crate) fn evaluate_atom(&self, statement: u64) -> Result<u64, Error> {
-        if is_number(statement) {
-            return Ok(statement);
+        if statement == 0 {
+            // simple shortcut to stop unnecessary recursions on nil cells
+            Ok(0)
+        } else if is_number(statement) {
+            Ok(statement)
         } else if is_symbol_ptr(statement) {
             // TODO Should check in the current context!
-            let symbol_cell = &self.memory.borrow()[ptr(statement)];
-            return if let Some(value) = self.get_property(
+            let symbol_cell_car = self.memory.borrow()[ptr(statement)].car;
+            if let Some(value) = self.get_property_value(
                 self.internal_symbols_key,
-                &Cell::decode_symbol_name(symbol_cell.car),
+                &Cell::decode_symbol_name(symbol_cell_car),
             ) {
-                Ok(value)
+                println!(
+                    "Found value for {}: {}",
+                    Cell::decode_symbol_name(symbol_cell_car),
+                    value
+                );
+                // returned value will be a SLOT, not the property itself
+                self.evaluate_atom(value)
             } else {
+                println!(
+                    "Did not find value for {}",
+                    Cell::decode_symbol_name(symbol_cell_car)
+                );
                 Ok(statement)
-            };
+            }
         } else if is_pointer(statement) {
             // Then it's a list
-            let list_head = &self.memory.borrow()[ptr(statement)];
+            let list_head = self.memory.borrow()[ptr(statement)].clone();
             if is_number(list_head.car) {
+                let mut previous_cell_idx = 0_usize;
+                let mut current_cell = list_head;
+                let mut new_head = 0_usize;
+                loop {
+                    let statement_result = self.evaluate_atom(current_cell.car)?;
+                    let new_cell_idx = self.insert_cell(Cell {
+                        car: statement_result,
+                        cdr: 0,
+                    });
+                    if new_head == 0 {
+                        new_head = new_cell_idx;
+                    }
+                    if previous_cell_idx != 0 {
+                        let mut previous_cell = &mut self.memory.borrow_mut()[previous_cell_idx];
+                        previous_cell.cdr = as_ptr(new_cell_idx);
+                    }
+
+                    if current_cell.cdr == 0 {
+                        break;
+                    } else {
+                        current_cell = self.memory.borrow()[ptr(current_cell.cdr)].clone();
+                        previous_cell_idx = new_cell_idx;
+                    }
+                }
+
                 // for now, return the whole list as such
-                return Ok(statement);
+                Ok(as_ptr(new_head))
             } else if is_symbol_ptr(list_head.car) {
                 let symbol_name_ptr = self.memory.borrow()[ptr(list_head.car)].car;
                 let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
@@ -35,22 +73,40 @@ impl LispEnv {
                         symbol_name,
                         ptr(list_head.cdr)
                     );
-                    return Ok(function.function(ptr(list_head.cdr), self));
+                    Ok(function.function(ptr(list_head.cdr), self))
+                } else if let Some(value_or_func) =
+                    self.get_property_value(self.internal_symbols_key, &symbol_name)
+                {
+                    println!("Found value: {}", Cell::format_component(value_or_func));
+                    self.evaluate_atom(value_or_func)
+                } else {
+                    println!("Didn't find function for {}", symbol_name);
+                    Ok(symbol_name_ptr)
                 }
+            } else if is_pointer(list_head.car) {
+                let result = self.evaluate_atom(list_head.car)?;
+                if list_head.cdr == 0 {
+                    return Ok(result);
+                }
+                self.evaluate_atom(list_head.cdr)
+            } else {
+                unreachable!()
             }
-            unimplemented!()
+        } else {
+            unreachable!()
         }
-
-        unreachable!()
     }
 
     pub fn evaluate(&self, statement_ptr: usize) -> Result<u64, Error> {
-        let program_cell = &self.memory.borrow()[statement_ptr];
-        if !program_cell.is_list() {
-            return Err(Error);
-        }
+        let atom_car = {
+            let program_cell = &self.memory.borrow()[statement_ptr];
+            if !program_cell.is_list() {
+                return Err(Error);
+            }
+            program_cell.car
+        };
 
-        self.evaluate_atom(program_cell.car)
+        self.evaluate_atom(as_ptr(statement_ptr))
     }
 }
 
@@ -76,11 +132,7 @@ mod tests {
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        assert!(is_symbol_ptr(result));
-        assert_eq!(
-            Cell::encode_symbol_name("a").0,
-            env.memory.borrow()[ptr(result)].car
-        );
+        assert_eq!(Cell::encode_symbol_name("a").0, result);
     }
 
     #[test]
@@ -189,6 +241,7 @@ mod tests {
         let result = env.evaluate(program);
 
         let result = result.unwrap();
+        env.print_memory();
         assert_eq!(300, as_number(result));
     }
 
@@ -203,7 +256,7 @@ mod tests {
         println!("Result ptr: {}", result);
         // Could be stored as a dot list, with car -> args list and cdr -> body?
         env.print_memory();
-        if let Some(foo_def) = env.get_property(env.internal_symbols_key, "foo") {
+        if let Some(foo_def) = env.get_property_value(env.internal_symbols_key, "foo") {
             assert_eq!(result, foo_def);
             let foo_def_cell = &env.memory.borrow()[ptr(foo_def)];
             assert!(is_pointer(foo_def_cell.car));
@@ -228,14 +281,20 @@ mod tests {
     #[test]
     fn resolve_value_of_global_symbol() {
         let mut env = LispEnv::new();
-        let result = env.parse("(def X NIL)");
+        let program = env.parse("(def X NIL)").unwrap();
+        let result = env.evaluate(program);
         assert!(result.is_ok());
 
-        env.print_memory();
         let result = result.unwrap();
-        assert_eq!(0, result);
+        // Returns the property SLOT, not the value itself!
+        assert_eq!(
+            "NIL",
+            Cell::decode_symbol_name(env.memory.borrow()[ptr(result)].car)
+        );
 
-        let result = env.parse("X");
+        let program = env.parse("X").unwrap();
+        let result = env.evaluate(program);
+        env.print_memory();
         assert!(result.is_ok());
         assert_eq!(0, result.unwrap());
     }
@@ -243,55 +302,67 @@ mod tests {
     #[test]
     fn assign_property_to_existing_symbol() {
         let mut env = LispEnv::new();
-        assert!(env.parse("(def X NIL)").is_ok());
+        let program = env.parse("(def X NIL)").unwrap();
+        assert!(env.evaluate(program).is_ok());
 
-        let result = env.parse("(put 'X 'a 1)");
+        let program = env.parse("(put 'X 'a 1)").unwrap();
+        let result = env.evaluate(program);
         assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert_ne!(0, result);
+
         todo!()
     }
 
     #[test]
     fn assign_property_to_new_symbol() {
         let mut env = LispEnv::new();
-        let result = env.parse("(put 'X 'a 1)"); // puts a=1 into X
+        let program = env.parse("(put 'X 'a 1)").unwrap(); // puts a=1 into X
+        let result = env.evaluate(program);
         assert!(result.is_ok());
 
+        let result = result.unwrap();
+        assert_ne!(0, result);
+
         env.print_memory();
+        assert!(env.global_scope_contains_property("X"));
 
-        todo!()
-
-        // let result = result.unwrap();
-        // assert!(is_pointer(result));
-        //
-        // assert!(env.global_scope_contains_property("X"));
+        let x_prop = env.get_property(env.internal_symbols_key, "X").unwrap();
+        assert_ne!(0, x_prop);
+        assert!(env.get_property_value(dbg!(x_prop), "a").is_some());
     }
 
-    //
-    //     #[test]
-    //     fn call_small_program() {
-    //         let mut env = LispEnv::new();
-    //         let result = env.parse("(def foo (X) X)\n(foo 42)");
-    //         assert!(result.is_ok());
-    //         let result = result.unwrap();
-    //         println!("Result ptr: {}", ptr(result));
-    //         env.print_memory();
-    //         assert_eq!(42, as_number(result));
-    //
-    //         // TODO Detect that the symbol references a program, and applies the arguments to the program
-    //     }
-    //
-    //     #[test]
-    //     fn parse_fibonacci_function() {
-    //         let mut env = LispEnv::new();
-    //         let result = env.parse(
-    //             r#"
-    // (def fib (N)
-    // 	(if (<= N 1) N (+ (fib (- N 1)) (fib (- N 2)))))
-    // (fib 10)"#,
-    //         );
-    //         println!("Res: {:?}", result);
-    //         assert!(result.is_ok());
-    //
-    //         let result = result.unwrap();
-    //     }
+    #[test]
+    fn call_small_program() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(def foo (X) X)\n(foo 42)").unwrap();
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        println!("Result ptr: {}", ptr(result));
+        env.print_memory();
+        assert_eq!(42, as_number(result));
+
+        // TODO Detect that the symbol references a program, and applies the arguments to the program
+    }
+
+    #[test]
+    fn parse_fibonacci_function() {
+        let mut env = LispEnv::new();
+        let program = env
+            .parse(
+                r#"
+    (def fib (N)
+    	(if (<= N 1) N (+ (fib (- N 1)) (fib (- N 2)))))
+    (fib 10)"#,
+            )
+            .unwrap();
+        let result = env.evaluate(program);
+        println!("Res: {:?}", result);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+    }
 }

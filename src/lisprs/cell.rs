@@ -1,4 +1,4 @@
-use crate::lisprs::util::{as_number, is_number, is_symbol_ptr, ptr};
+use crate::lisprs::util::{as_number, as_ptr, is_number, is_symbol_ptr, ptr};
 use std::cmp::min;
 use std::fmt::{Debug, Formatter};
 
@@ -10,54 +10,30 @@ pub struct Cell {
 
 impl Debug for Cell {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.is_list() {
-            let val = if is_symbol_ptr(self.car) {
-                format!("SymbolPtr:[{}]", self.car_ptr())
-            } else {
-                let number_prefix = if self.is_number() {
-                    format!("Num[{}] | ", self.as_number())
-                } else {
-                    "".to_string()
-                };
-                format!(
-                    "Cell{{{}Raw[{}] | ASCII[{}]}}",
-                    number_prefix,
-                    self.car,
-                    Cell::decode_symbol_name(self.car)
-                )
-            };
-            f.write_fmt(format_args!("Cell[List {}, next: {}]", val, self.cdr_ptr()))
-        } else {
-            let car_str = if is_number(self.car) {
-                format!(
-                    "Num[{}] | Raw[{}] | ASCII[{}]",
-                    as_number(self.car),
-                    self.car,
-                    Cell::decode_symbol_name(self.car)
-                )
-            } else if is_symbol_ptr(self.car) {
-                format!("SymbolPtr:[{}]", self.car_ptr())
-            } else {
-                self.car.to_string()
-            };
-            let cdr_str = if is_number(self.cdr) {
-                format!(
-                    "Num[{}] | Raw[{}] | ASCII[{}]",
-                    as_number(self.cdr),
-                    self.cdr,
-                    Cell::decode_symbol_name(self.cdr)
-                )
-            } else if is_symbol_ptr(self.cdr) {
-                format!("SymbolPtr:[{}]", self.cdr_ptr())
-            } else {
-                self.cdr.to_string()
-            };
-            f.write_fmt(format_args!("Cell{{car: {}, cdr: {}}}", car_str, cdr_str))
-        }
+        f.write_fmt(format_args!(
+            "Cell{{car: {}, cdr: {}}}",
+            Cell::format_component(self.car),
+            Cell::format_component(self.cdr)
+        ))
     }
 }
 
 impl Cell {
+    pub(crate) fn format_component(val: u64) -> String {
+        if is_number(val) {
+            format!(
+                "Num[{}] | Raw[{}] | ASCII[{}]",
+                as_number(val),
+                val,
+                Cell::decode_symbol_name(val)
+            )
+        } else if is_symbol_ptr(val) {
+            format!("SymbolPtr[{}] | Raw[{}]", ptr(val), val)
+        } else {
+            format!("Ptr[{}] | Raw[{}]", ptr(val), val)
+        }
+    }
+
     pub fn empty() -> Self {
         Self { car: 0, cdr: 0 }
     }
@@ -80,11 +56,11 @@ impl Cell {
     }
 
     pub fn set_car_pointer(&mut self, raw_addr: usize) {
-        self.car = (raw_addr as u64) << 4;
+        self.car = as_ptr(raw_addr);
     }
 
     pub fn set_cdr_pointer(&mut self, raw_addr: usize) {
-        self.cdr = (raw_addr as u64) << 4;
+        self.cdr = as_ptr(raw_addr);
     }
 
     pub fn car_ptr(&self) -> usize {

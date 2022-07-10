@@ -5,6 +5,7 @@ mod def;
 mod eq;
 mod mult;
 mod put;
+mod quote;
 mod symbols;
 
 pub static CORE_FUNCTIONS: &'static [&dyn LispFunction] = &[
@@ -13,5 +14,6 @@ pub static CORE_FUNCTIONS: &'static [&dyn LispFunction] = &[
     &eq::Eq,
     &mult::Mult,
     &put::Put,
+    &quote::Quote,
     &symbols::Symbols,
 ];
