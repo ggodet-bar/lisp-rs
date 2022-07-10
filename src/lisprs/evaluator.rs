@@ -67,6 +67,7 @@ impl LispEnv {
             } else if is_symbol_ptr(list_head.car) {
                 let symbol_name_ptr = self.memory.borrow()[ptr(list_head.car)].car;
                 let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
+                println!("Resolving symbol {}", symbol_name);
                 if let Some(function) = self.functions.get(&symbol_name) {
                     println!(
                         "Calling function {} on memory idx {}",
@@ -75,15 +76,55 @@ impl LispEnv {
                     );
                     Ok(function.function(ptr(list_head.cdr), self))
                 } else if let Some(value_or_func) =
-                    self.get_property_value(self.internal_symbols_key, &symbol_name)
+                    self.get_property(self.internal_symbols_key, &symbol_name)
                 {
-                    println!("Found value: {}", Cell::format_component(value_or_func));
-                    self.evaluate_atom(value_or_func)
+                    if is_pointer(value_or_func) {
+                        // TODO For now we won't bother that `value_or_func` should probably be a
+                        //      symbol pointer, since we have [val | name]
+                        let value_cell = self.memory.borrow()[ptr(value_or_func)].clone();
+                        println!("Target cell: {:?}", value_cell);
+                        if is_pointer(value_cell.car) && value_cell.cdr == symbol_name_ptr {
+                            let prog_def_cell = self.memory.borrow()[ptr(value_cell.car)].clone();
+                            let params_list_ptr = dbg!(prog_def_cell.car);
+                            let prog_body = prog_def_cell.cdr;
+                            let arg_list_ptr = list_head.cdr;
+                            // TODO Create a proper frame in which to do the symbol matching
+                            if self.get_list_length(params_list_ptr)
+                                != self.get_list_length(arg_list_ptr)
+                            {
+                                unimplemented!("Param/arg mismatch");
+                            }
+                            let params_list_ptr = self.memory.borrow()[ptr(params_list_ptr)].car;
+                            let first_param = self.memory.borrow()[ptr(params_list_ptr)].car;
+                            let first_arg = self.memory.borrow()[ptr(arg_list_ptr)].car;
+                            println!(
+                                "Assigning value {} to param {}",
+                                Cell::format_component(first_arg),
+                                Cell::format_component(first_param)
+                            );
+                            self.append_property(self.internal_symbols_key, first_param, first_arg);
+                            self.print_memory();
+                            // panic!(
+                            //     "FOUND A PROGRAM with params {}, body {} and params {}",
+                            //     Cell::format_component(params_list_ptr),
+                            //     Cell::format_component(prog_body),
+                            //     Cell::format_component(arg_list_ptr),
+                            // );
+                            self.evaluate_atom(prog_body)
+                        } else {
+                            println!("Found value: {}", Cell::format_component(value_or_func));
+                            self.evaluate_atom(value_cell.car)
+                        }
+                    } else {
+                        println!("Found value: {}", Cell::format_component(value_or_func));
+                        self.evaluate_atom(value_or_func)
+                    }
                 } else {
                     println!("Didn't find function for {}", symbol_name);
                     Ok(symbol_name_ptr)
                 }
             } else if is_pointer(list_head.car) {
+                println!("Found pointer to {}", ptr(list_head.car));
                 let result = self.evaluate_atom(list_head.car)?;
                 if list_head.cdr == 0 {
                     return Ok(result);
@@ -253,9 +294,7 @@ mod tests {
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        println!("Result ptr: {}", result);
-        // Could be stored as a dot list, with car -> args list and cdr -> body?
-        env.print_memory();
+        // Stored as a dot list, with car -> args list and cdr -> body
         if let Some(foo_def) = env.get_property_value(env.internal_symbols_key, "foo") {
             assert_eq!(result, foo_def);
             let foo_def_cell = &env.memory.borrow()[ptr(foo_def)];
@@ -341,11 +380,7 @@ mod tests {
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        println!("Result ptr: {}", ptr(result));
-        env.print_memory();
         assert_eq!(42, as_number(result));
-
-        // TODO Detect that the symbol references a program, and applies the arguments to the program
     }
 
     #[test]
