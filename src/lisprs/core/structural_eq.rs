@@ -12,18 +12,21 @@ impl LispFunction for Eq {
     }
 
     fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
-        let memory = env.memory.borrow();
-        let first_arg_slot = &memory[args_idx];
-        println!("arg cell: {:?}", first_arg_slot);
-        // TODO List iterator!!!
-        if first_arg_slot.cdr == 0 {
-            unimplemented!()
-        }
+        let (first_arg_slot_car, second_arg_slot_car) = {
+            let memory = env.memory.borrow();
+            let first_arg_slot = &memory[args_idx];
+            println!("arg cell: {:?}", first_arg_slot);
+            // TODO List iterator!!!
+            if first_arg_slot.cdr == 0 {
+                unimplemented!()
+            }
 
-        let second_arg_slot = &memory[ptr(first_arg_slot.cdr)];
-        if second_arg_slot.cdr != 0 {
-            unimplemented!()
-        }
+            let second_arg_slot = &memory[ptr(first_arg_slot.cdr)];
+            if second_arg_slot.cdr != 0 {
+                unimplemented!()
+            }
+            (first_arg_slot.car, second_arg_slot.car)
+        };
 
         let mut pending_cells = VecDeque::new();
 
@@ -31,8 +34,8 @@ impl LispFunction for Eq {
         // since first_arg_slot will be pointing to second_arg_slot, so we just compare the
         // actual values, i.e. the cars
         if !Eq::compare_half_cells(
-            first_arg_slot.car,
-            second_arg_slot.car,
+            env.evaluate_atom(first_arg_slot_car).unwrap(),
+            env.evaluate_atom(second_arg_slot_car).unwrap(),
             env,
             &mut pending_cells,
         ) {
@@ -41,11 +44,21 @@ impl LispFunction for Eq {
 
         while let Some((left, right)) = pending_cells.pop_front() {
             println!("Left cell: {:?}, Right cell: {:?}", left, right);
-            if !Eq::compare_half_cells(left.car, right.car, env, &mut pending_cells) {
+            if !Eq::compare_half_cells(
+                env.evaluate_atom(left.car).unwrap(),
+                env.evaluate_atom(right.car).unwrap(),
+                env,
+                &mut pending_cells,
+            ) {
                 return env.nil_key;
             }
 
-            if !Eq::compare_half_cells(left.cdr, right.cdr, env, &mut pending_cells) {
+            if !Eq::compare_half_cells(
+                env.evaluate_atom(left.cdr).unwrap(),
+                env.evaluate_atom(right.cdr).unwrap(),
+                env,
+                &mut pending_cells,
+            ) {
                 return env.nil_key;
             }
         }
@@ -83,6 +96,7 @@ impl Eq {
 #[cfg(test)]
 mod tests {
     use crate::lisprs::cell::Cell;
+    use crate::lisprs::util::is_true;
     use crate::lisprs::LispEnv;
 
     #[test]
@@ -102,7 +116,7 @@ mod tests {
 
         let result = env.evaluate(program);
         assert!(result.is_ok());
-        assert_eq!(Cell::encode_symbol_name("T").0, result.unwrap());
+        assert!(is_true(result.unwrap()));
     }
 
     #[test]
@@ -122,7 +136,7 @@ mod tests {
 
         let result = env.evaluate(program);
         assert!(result.is_ok());
-        assert_eq!(Cell::encode_symbol_name("T").0, result.unwrap());
+        assert!(is_true(result.unwrap()));
     }
 
     #[test]
@@ -142,7 +156,7 @@ mod tests {
 
         let result = env.evaluate(program);
         assert!(result.is_ok());
-        assert_eq!(Cell::encode_symbol_name("T").0, result.unwrap());
+        assert!(is_true(result.unwrap()));
     }
 
     #[test]
@@ -162,7 +176,7 @@ mod tests {
 
         let result = env.evaluate(program);
         assert!(result.is_ok());
-        assert_eq!(Cell::encode_symbol_name("T").0, result.unwrap());
+        assert!(is_true(result.unwrap()));
     }
 
     #[test]
@@ -172,7 +186,7 @@ mod tests {
 
         let result = env.evaluate(program);
         assert!(result.is_ok());
-        assert_eq!(Cell::encode_symbol_name("T").0, result.unwrap());
+        assert!(is_true(result.unwrap()));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::core::CORE_FUNCTIONS;
 use crate::lisprs::util::{is_number, is_pointer, is_symbol_ptr, number_pointer, ptr};
+use crate::lisprs::Assets;
 use slab::Slab;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -118,12 +119,18 @@ impl LispEnv {
             Cell::encode_symbol_name("pi").0,
             env.encode_number("3.141592653589793"),
         );
-        // FIXME `list` is probably not a primitive, but is used now in order to get a consistent
-        // call stack
-        // env.functions.insert(
-        //     "list".to_string(),
-        //     Box::new(|args, env| (args.to_owned(), false)),
-        // );
+
+        // for file in Assets::iter() {
+        //     println!("Load {}", file.as_ref());
+        //     let raw = Assets::get(file.as_ref()).unwrap().data;
+        //     let contents = std::str::from_utf8(&raw).unwrap();
+        //     println!("Contents of {}: {}", file.as_ref(), contents);
+        //
+        //     let program = env.parse(contents).unwrap();
+        //     let result = env.evaluate(program).unwrap();
+        //     println!("Result is {}", Cell::format_component(result));
+        // }
+
         env
     }
 

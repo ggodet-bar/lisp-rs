@@ -11,4 +11,5 @@ err-derive = "0.3"
 filesystem = "0.4"
 pest = "2.1"
 pest_derive = "2.1"
+rust-embed = { version = "6.4", features = [ "debug-embed"] }
 slab = "0.4"

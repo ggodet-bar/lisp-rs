@@ -1,3 +1,5 @@
+use crate::lisprs::cell::Cell;
+
 pub fn is_number(val: u64) -> bool {
     val & 0b10 > 0
 }
@@ -13,6 +15,10 @@ pub fn is_symbol_ptr(val: u64) -> bool {
 
 pub fn is_pointer(val: u64) -> bool {
     val & 0b0110 == 0
+}
+
+pub fn is_true(val: u64) -> bool {
+    Cell::encode_symbol_name("T").0 == val
 }
 
 pub fn ptr(val: u64) -> usize {
