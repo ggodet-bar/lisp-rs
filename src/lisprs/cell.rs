@@ -38,21 +38,8 @@ impl Cell {
         Self { car: 0, cdr: 0 }
     }
 
-    pub fn is_nil(&self) -> bool {
-        self.car == Cell::encode_symbol_name("nil").0 && self.cdr == 0 // by convention nil is the first entry, so its addr is 0
-    }
-
     pub fn is_list(&self) -> bool {
         self.cdr & 0b1110 == 0 // CDR is a pointer
-    }
-
-    pub fn is_number(&self) -> bool {
-        // FIXME Won't take big numbers into account, would need the env
-        is_number(self.car)
-    }
-
-    pub fn as_number(&self) -> i64 {
-        as_number(self.car)
     }
 
     pub fn set_car_pointer(&mut self, raw_addr: usize) {

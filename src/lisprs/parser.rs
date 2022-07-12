@@ -1,5 +1,5 @@
 use crate::lisprs::cell::Cell;
-use crate::lisprs::util::{as_ptr, is_number, is_pointer, ptr};
+use crate::lisprs::util::as_ptr;
 use crate::lisprs::LispEnv;
 use pest::iterators::{Pair, Pairs};
 use pest::Parser as PestParser;
@@ -143,7 +143,7 @@ mod tests {
         assert!(is_symbol_ptr(cell.car));
 
         let first_element = &env.memory.borrow()[cell.car_ptr()];
-        assert!(first_element.is_number());
+        assert!(is_number(first_element.car));
         assert_eq!("a", Cell::decode_symbol_name(first_element.car));
     }
 
