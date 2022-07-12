@@ -139,14 +139,6 @@ impl LispEnv {
     }
 
     pub fn evaluate(&self, statement_ptr: usize) -> Result<u64, Error> {
-        let atom_car = {
-            let program_cell = &self.memory.borrow()[statement_ptr];
-            if !program_cell.is_list() {
-                return Err(Error);
-            }
-            program_cell.car
-        };
-
         self.evaluate_atom(as_ptr(statement_ptr))
     }
 }
