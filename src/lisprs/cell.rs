@@ -100,14 +100,18 @@ impl Cell {
             result |= (*b as u64) << (idx + 1) * 8;
         }
 
-        (
-            result,
-            &[]
-            // if byte_representation.len() > 8 {
-            //     &byte_representation[8..]
-            // } else {
-            //     &[]
-            // },
-        )
+        (result, &[])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lisprs::cell::Cell;
+
+    #[test]
+    fn set_cell_pointer() {
+        let mut cell = Cell::empty();
+        cell.set_cdr_pointer(12345);
+        assert_eq!(cell.cdr, (12345 as u64) << 4);
     }
 }

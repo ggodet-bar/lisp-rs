@@ -198,54 +198,6 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_simple_addition() {
-        let mut env = LispEnv::new();
-        let program = env.parse("(+ 1 2)").unwrap();
-        let result = env.evaluate(program);
-        assert!(result.is_ok());
-
-        let result = result.unwrap();
-        assert_eq!(number_pointer(3), result);
-    }
-
-    #[test]
-    fn evaluate_simple_multiplication() {
-        let mut env = LispEnv::new();
-        let program = env.parse("(* 3 4)").unwrap();
-        let result = env.evaluate(program);
-        assert!(result.is_ok());
-
-        env.print_memory();
-
-        let result = result.unwrap();
-        assert_eq!(number_pointer(12), result);
-    }
-
-    #[test]
-    fn parse_nested_operation_1() {
-        let mut env = LispEnv::new();
-        let program = env.parse("(+ (+ 1 2) 4)").unwrap();
-        let result = env.evaluate(program);
-        assert!(result.is_ok());
-
-        let result = result.unwrap();
-        assert!(is_number(result));
-        assert_eq!(7, as_number(result));
-    }
-
-    #[test]
-    fn parse_nested_operation_2() {
-        let mut env = LispEnv::new();
-        let program = env.parse("(+ (+ 1 2) (+ 3 (+ 4 5 6)))").unwrap();
-        let result = env.evaluate(program);
-        assert!(result.is_ok());
-
-        let result = result.unwrap();
-        assert!(is_number(result));
-        assert_eq!(21, as_number(result));
-    }
-
-    #[test]
     fn eval_operation_in_sublist() {
         let mut env = LispEnv::new();
         let program = env.parse("(2 (* 3 6))").unwrap();
@@ -394,10 +346,12 @@ mod tests {
     (fib 10)"#,
             )
             .unwrap();
+        // returns the nth item in the Fibonacci sequence
         let result = env.evaluate(program);
         println!("Res: {:?}", result);
         assert!(result.is_ok());
 
         let result = result.unwrap();
+        assert_eq!(number_pointer(55), result);
     }
 }

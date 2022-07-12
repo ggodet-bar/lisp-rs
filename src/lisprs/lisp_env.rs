@@ -303,21 +303,6 @@ mod tests {
     use crate::lisprs::util::as_number;
 
     #[test]
-    fn list_single_namespace() {
-        let mut env = LispEnv::new();
-        let program = env.parse("(symbols)").unwrap();
-        let result = env.evaluate(program);
-        assert!(result.is_ok());
-
-        let result = result.unwrap();
-        assert!(is_pointer(result));
-
-        let root_cell = &env.memory.borrow()[ptr(result)];
-        assert_eq!(Cell::encode_symbol_name("_lisprs").0, root_cell.car);
-        assert_eq!(0, root_cell.cdr);
-    }
-
-    #[test]
     fn encode_short_number_in_returned_pointer() {
         let env = LispEnv::new();
         let short_number = env.encode_number("1");

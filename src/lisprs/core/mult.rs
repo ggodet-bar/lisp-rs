@@ -42,3 +42,42 @@ impl LispFunction for Mult {
         number_pointer(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::lisprs::util::number_pointer;
+    use crate::lisprs::LispEnv;
+
+    #[test]
+    fn simple_multiplication() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(* 3 4)").unwrap();
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert_eq!(number_pointer(12), result);
+    }
+
+    #[test]
+    fn multiple_terms() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(* 3 4 5)").unwrap();
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert_eq!(number_pointer(60), result);
+    }
+
+    #[test]
+    fn nested_multiplication() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(* 3 (* 2 3))").unwrap();
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert_eq!(number_pointer(18), result);
+    }
+}
