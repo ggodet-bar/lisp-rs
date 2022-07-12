@@ -2,6 +2,7 @@ use crate::lisprs::lisp_env::LispFunction;
 
 mod add;
 mod def;
+mod r#if;
 mod mult;
 mod put;
 mod quote;
@@ -12,6 +13,7 @@ pub static CORE_FUNCTIONS: &'static [&dyn LispFunction] = &[
     &add::Add,
     &def::Def,
     &structural_eq::Eq,
+    &r#if::If,
     &mult::Mult,
     &put::Put,
     &quote::Quote,
