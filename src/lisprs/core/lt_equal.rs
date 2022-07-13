@@ -1,0 +1,72 @@
+use crate::lisprs::lisp_env::LispFunction;
+use crate::lisprs::util::{as_number, is_number, ptr, true_symbol};
+use crate::lisprs::LispEnv;
+
+pub struct LtEqual;
+
+impl LispFunction for LtEqual {
+    fn symbol(&self) -> String {
+        "<=".to_string()
+    }
+
+    fn function(&self, arg_idx: usize, env: &LispEnv) -> u64 {
+        let (first_term, second_term) = {
+            let first_arg_cell = &env.memory.borrow()[arg_idx];
+            let second_arg_cell = &env.memory.borrow()[ptr(first_arg_cell.cdr)];
+
+            (first_arg_cell.car, second_arg_cell.car)
+        };
+
+        let first_term = env.evaluate_atom(first_term).unwrap();
+        let second_term = env.evaluate_atom(second_term).unwrap();
+
+        if !is_number(first_term) || !is_number(second_term) {
+            panic!("Looking for numbers");
+        }
+
+        if as_number(first_term) <= as_number(second_term) {
+            true_symbol()
+        } else {
+            0
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lisprs::util::true_symbol;
+    use crate::lisprs::LispEnv;
+
+    #[test]
+    fn lower() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(<= 1 4)").unwrap();
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert_eq!(true_symbol(), result);
+    }
+
+    #[test]
+    fn equal() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(<= 4 4)").unwrap();
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert_eq!(true_symbol(), result);
+    }
+
+    #[test]
+    fn greater() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(<= 4 1)").unwrap();
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert_eq!(0, result);
+    }
+}

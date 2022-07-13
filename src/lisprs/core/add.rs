@@ -11,10 +11,8 @@ impl LispFunction for Add {
 
     fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
         let sum = {
-            let memory = env.memory.borrow();
-            let args = &memory[args_idx];
             let mut sum = 0;
-            let mut current_cell = args;
+            let mut current_cell = env.memory.borrow()[args_idx].clone();
 
             loop {
                 println!("+ current cell: {:?}", current_cell);
@@ -30,7 +28,7 @@ impl LispFunction for Add {
                 if current_cell.cdr == 0 {
                     break;
                 }
-                current_cell = &memory[current_cell.cdr_ptr()];
+                current_cell = env.memory.borrow()[current_cell.cdr_ptr()].clone();
             }
 
             sum

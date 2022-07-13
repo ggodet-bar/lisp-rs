@@ -10,16 +10,16 @@ impl LispFunction for If {
     }
 
     fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
-        let condition_cell = &env.memory.borrow()[args_idx];
-        let true_cell = &env.memory.borrow()[ptr(condition_cell.cdr)];
+        let condition_cell = env.memory.borrow()[args_idx].clone();
+        let true_cell = env.memory.borrow()[ptr(condition_cell.cdr)].clone();
         let condition = env.evaluate_atom(condition_cell.car).unwrap();
         if condition == 0 || is_number(condition) || is_symbol_ptr(condition) {
             // if post-evaluation the symbol returns itself, then its value is true
             if condition != 0 && as_number(condition_cell.car) != 0 {
-                true_cell.car
+                env.evaluate_atom(true_cell.car).unwrap()
             } else {
-                let false_cell = &env.memory.borrow()[ptr(true_cell.cdr)];
-                false_cell.car
+                let false_cell_car = env.memory.borrow()[ptr(true_cell.cdr)].car;
+                env.evaluate_atom(false_cell_car).unwrap()
             }
         } else {
             unimplemented!()
@@ -69,5 +69,31 @@ mod tests {
         let result = result.unwrap();
         assert!(is_number(result));
         assert_eq!(2, as_number(result));
+    }
+
+    #[test]
+    fn evaluate_true_condition() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(if 1 (+ 1 1) 3)").unwrap();
+
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert!(is_number(result));
+        assert_eq!(2, as_number(result));
+    }
+
+    #[test]
+    fn evaluate_false_condition() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(if NIL 1 (+ 1 2))").unwrap();
+
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert!(is_number(result));
+        assert_eq!(3, as_number(result));
     }
 }

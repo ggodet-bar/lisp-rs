@@ -18,7 +18,7 @@ impl LispEnv {
             Rule::number => self.encode_number(atom.as_str()),
             Rule::symbol => {
                 let symbol_name = atom.as_str();
-                println!("Allocating symbol {}", symbol_name);
+                // println!("Allocating symbol {}", symbol_name);
                 self.allocate_symbol(Some(symbol_name), self.nil_key)
             }
             Rule::sexpr => self.parse_list(atom.into_inner())?,
@@ -47,7 +47,7 @@ impl LispEnv {
 
     /// Returns the pointer to the list
     fn parse_list(&mut self, atoms: Pairs<Rule>) -> Result<u64, pest::error::Error<Rule>> {
-        println!("--- LIST atoms {:?}", atoms);
+        // println!("--- LIST atoms {:?}", atoms);
         let mut result = 0_u64; // pointer to nil
         let mut list_tail_ptr = 0_usize;
 
@@ -57,7 +57,7 @@ impl LispEnv {
                 car: atom_value,
                 cdr: 0,
             });
-            println!("Appending cell at idx {}", new_cell_idx);
+            // println!("Appending cell at idx {}", new_cell_idx);
             if result == 0 {
                 result = as_ptr(new_cell_idx); // then result acts as the list head
             }

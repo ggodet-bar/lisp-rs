@@ -10,7 +10,7 @@ impl LispFunction for Def {
     }
 
     fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
-        let value_head = match dbg!(env.get_list_length((args_idx as u64) << 4)) {
+        let value_head = match env.get_list_length((args_idx as u64) << 4) {
             2 => {
                 let (value_head, symbol_cell_idx) = {
                     let memory = env.memory.borrow();

@@ -18,7 +18,11 @@ pub fn is_pointer(val: u64) -> bool {
 }
 
 pub fn is_true(val: u64) -> bool {
-    Cell::encode_symbol_name("T").0 == val
+    true_symbol() == val
+}
+
+pub fn true_symbol() -> u64 {
+    Cell::encode_symbol_name("T").0
 }
 
 pub fn ptr(val: u64) -> usize {

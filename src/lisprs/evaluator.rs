@@ -102,14 +102,8 @@ impl LispEnv {
                                 Cell::format_component(first_arg),
                                 Cell::format_component(first_param)
                             );
+                            // FIXME Handle a proper function scope
                             self.append_property(self.internal_symbols_key, first_param, first_arg);
-                            self.print_memory();
-                            // panic!(
-                            //     "FOUND A PROGRAM with params {}, body {} and params {}",
-                            //     Cell::format_component(params_list_ptr),
-                            //     Cell::format_component(prog_body),
-                            //     Cell::format_component(arg_list_ptr),
-                            // );
                             self.evaluate_atom(prog_body)
                         } else {
                             println!("Found value: {}", Cell::format_component(value_or_func));
@@ -339,11 +333,16 @@ mod tests {
             )
             .unwrap();
         // returns the nth item in the Fibonacci sequence
+        println!("------");
+        todo!("Implement proper function frames to avoid stack overflows");
         let result = env.evaluate(program);
         println!("Res: {:?}", result);
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        assert_eq!(number_pointer(55), result);
+        println!("Result: {}", Cell::format_component(result));
+
+        env.print_memory();
+        assert_eq!(55, as_number(result));
     }
 }

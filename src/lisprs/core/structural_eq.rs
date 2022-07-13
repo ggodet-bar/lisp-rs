@@ -1,6 +1,6 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::lisp_env::LispFunction;
-use crate::lisprs::util::{is_pointer, ptr};
+use crate::lisprs::util::{is_pointer, ptr, true_symbol};
 use crate::lisprs::LispEnv;
 use std::collections::VecDeque;
 
@@ -63,7 +63,7 @@ impl LispFunction for Eq {
             }
         }
 
-        Cell::encode_symbol_name("T").0
+        true_symbol()
     }
 }
 
@@ -95,7 +95,6 @@ impl Eq {
 
 #[cfg(test)]
 mod tests {
-    use crate::lisprs::cell::Cell;
     use crate::lisprs::util::is_true;
     use crate::lisprs::LispEnv;
 

@@ -1,3 +1,4 @@
+use crate::lisprs::cell::Cell;
 use crate::lisprs::lisp_env::LispFunction;
 use crate::lisprs::util::{is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
@@ -11,17 +12,28 @@ impl LispFunction for Car {
 
     fn function(&self, arg_idx: usize, env: &LispEnv) -> u64 {
         let first_arg_ptr = env.memory.borrow()[arg_idx].car;
-        if is_symbol_ptr(first_arg_ptr) {
+        let first_arg_result = env.evaluate_atom(first_arg_ptr).unwrap();
+        println!(
+            "First arg ptr: {}",
+            Cell::format_component(first_arg_result)
+        );
+        if first_arg_result == 0 {
+            return 0;
+        }
+        if is_symbol_ptr(first_arg_result) {
             unimplemented!()
         } else {
-            env.memory.borrow()[ptr(first_arg_ptr)].car
+            let result = env.memory.borrow()[ptr(first_arg_result)].car;
+            println!("Car result {}", Cell::format_component(result));
+
+            result
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::lisprs::util::{as_number, is_pointer, is_true, ptr};
+    use crate::lisprs::util::as_number;
     use crate::lisprs::LispEnv;
 
     #[test]
@@ -58,5 +70,19 @@ mod tests {
 
         let result = result.unwrap();
         assert_eq!(1, as_number(result));
+    }
+
+    #[test]
+    fn evaluate_list() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(car (cdr (1 2 3 4)))").unwrap();
+
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        env.print_memory();
+
+        let result = result.unwrap();
+        assert_eq!(2, as_number(result));
     }
 }

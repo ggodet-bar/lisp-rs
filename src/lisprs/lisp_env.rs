@@ -55,7 +55,7 @@ impl LispEnv {
             let cell = &mut self.memory.borrow_mut()[cell_key];
             if let Some(name) = name {
                 let (name_fragment, rest) = Cell::encode_symbol_name(name);
-                println!("Name frag: {:#b}", name_fragment);
+                // println!("Name frag: {:#b}", name_fragment);
                 if rest.is_empty() {
                     cell.car = name_fragment;
                 } else {
@@ -65,7 +65,7 @@ impl LispEnv {
             cell.cdr = value_ptr;
         }
 
-        println!("Symbol allocated at idx {}", cell_key);
+        // println!("Symbol allocated at idx {}", cell_key);
 
         (cell_key as u64) << 4 | 0b1000
     }
@@ -120,16 +120,16 @@ impl LispEnv {
             env.encode_number("3.141592653589793"),
         );
 
-        // for file in Assets::iter() {
-        //     println!("Load {}", file.as_ref());
-        //     let raw = Assets::get(file.as_ref()).unwrap().data;
-        //     let contents = std::str::from_utf8(&raw).unwrap();
-        //     println!("Contents of {}: {}", file.as_ref(), contents);
-        //
-        //     let program = env.parse(contents).unwrap();
-        //     let result = env.evaluate(program).unwrap();
-        //     println!("Result is {}", Cell::format_component(result));
-        // }
+        for file in Assets::iter() {
+            println!("Load {}", file.as_ref());
+            let raw = Assets::get(file.as_ref()).unwrap().data;
+            let contents = std::str::from_utf8(&raw).unwrap();
+            println!("Contents of {}: {}", file.as_ref(), contents);
+
+            let program = env.parse(contents).unwrap();
+            let result = env.evaluate(program).unwrap();
+            println!("Result is {}", Cell::format_component(result));
+        }
 
         env
     }
@@ -171,10 +171,10 @@ impl LispEnv {
                 );
                 let mut current_property_slot_ptr = name_cell_car;
                 loop {
-                    println!(
-                        "Current property slot ptr: {:#b}",
-                        current_property_slot_ptr
-                    );
+                    // println!(
+                    //     "Current property slot ptr: {:#b}",
+                    //     current_property_slot_ptr
+                    // );
                     let next_prop_ptr = self.memory.borrow()[ptr(current_property_slot_ptr)].cdr;
                     if next_prop_ptr == 0 {
                         self.memory.borrow_mut()[ptr(current_property_slot_ptr)]
@@ -194,10 +194,10 @@ impl LispEnv {
                 // Then we need to rearrange the cell to describe a non-unitary symbol
                 let name_cell_idx = self.allocate_empty_cell();
                 self.memory.borrow_mut()[symbol_ptr].set_car_pointer(name_cell_idx);
-                println!(
-                    "New root cell car: {:#b}",
-                    self.memory.borrow()[symbol_ptr].car
-                );
+                // println!(
+                //     "New root cell car: {:#b}",
+                //     self.memory.borrow()[symbol_ptr].car
+                // );
                 {
                     let mut name_cell = &mut self.memory.borrow_mut()[name_cell_idx];
                     name_cell.set_car_pointer(prop_slot_idx);
@@ -572,5 +572,13 @@ mod tests {
             Some(number_pointer(10)),
             env.get_property_value(symb_ptr, "bar")
         );
+    }
+
+    #[test]
+    fn cadr_from_stdlib() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(cadr (1 2 3))").unwrap();
+        let result = env.evaluate(program).unwrap();
+        assert_eq!(2, as_number(result));
     }
 }
