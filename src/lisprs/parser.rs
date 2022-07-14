@@ -22,6 +22,15 @@ impl LispEnv {
                 self.allocate_symbol(Some(symbol_name), self.nil_key)
             }
             Rule::sexpr => self.parse_list(atom.into_inner())?,
+            Rule::dotted_list => {
+                let mut inner = atom.into_inner();
+                let first_term = self.parse_atom(inner.next().unwrap())?;
+                let second_term = self.parse_atom(inner.next().unwrap())?;
+                as_ptr(self.insert_cell(Cell {
+                    car: first_term,
+                    cdr: second_term,
+                }))
+            }
             Rule::quoted_atom => {
                 // We normalize it as a list
                 let list_content = self.parse_atom(atom.into_inner().next().unwrap())?;
@@ -209,6 +218,43 @@ mod tests {
 
         let symbol = &env.memory.borrow()[ptr(nested_list_head.car)];
         assert_eq!("a", Cell::decode_symbol_name(symbol.car));
+    }
+
+    #[test]
+    fn parse_dotted_list() {
+        let mut env = LispEnv::new();
+        let result = env.parse("(1 . 2)");
+        assert!(result.is_ok());
+
+        let first_statement = &env.memory.borrow()[result.unwrap()];
+
+        let list_head = &env.memory.borrow()[ptr(first_statement.car)];
+        assert_eq!(1, as_number(list_head.car));
+        assert_eq!(2, as_number(list_head.cdr));
+    }
+
+    #[test]
+    fn parse_nested_dotted_list() {
+        let mut env = LispEnv::new();
+        let result = env.parse("(1 . (2 . (3 . NIL)))");
+        assert!(result.is_ok());
+
+        let first_statement = &env.memory.borrow()[result.unwrap()];
+
+        let list_head = &env.memory.borrow()[ptr(first_statement.car)];
+        assert_eq!(1, as_number(list_head.car));
+        assert!(is_pointer(list_head.cdr));
+
+        let second_cell = &env.memory.borrow()[ptr(list_head.cdr)];
+        assert_eq!(2, as_number(second_cell.car));
+        assert!(is_pointer(second_cell.cdr));
+
+        let third_cell = &env.memory.borrow()[ptr(second_cell.cdr)];
+        assert_eq!(3, as_number(third_cell.car));
+        assert!(is_symbol_ptr(third_cell.cdr));
+
+        let final_symbol_cell = &env.memory.borrow()[ptr(third_cell.cdr)];
+        assert_eq!(Cell::encode_symbol_name("NIL").0, final_symbol_cell.car);
     }
 
     #[test]

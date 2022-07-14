@@ -7,9 +7,10 @@ string_character = {
     ~ ANY         // then consume one character
 }
 
-atom = _{ symbol | number | string | sexpr }
+atom = _{ symbol | number | string | sexpr | dotted_list }
 quoted_atom = { "'"  ~ atom}
 atom_type = _{ quoted_atom | atom }
+dotted_list = { "(" ~ atom_type ~ "." ~ atom_type ~ ")" }
 sexpr = { "(" ~ atom_type* ~ ")" }
 lisp = { SOI ~ atom_type* ~ EOI }
 
