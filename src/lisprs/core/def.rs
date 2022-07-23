@@ -45,7 +45,6 @@ impl LispFunction for Def {
                 });
 
                 let result_ptr = (result_ptr as u64) << 4;
-                env.print_memory();
                 env.append_property_to_stack(name_car, result_ptr);
 
                 result_ptr

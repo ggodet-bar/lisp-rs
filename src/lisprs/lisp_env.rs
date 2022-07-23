@@ -9,7 +9,7 @@ use std::str::FromStr;
 
 /// TEMP: Max number of evaluation cycles before the evaluation is forcibly stopped. Used to
 ///       debug stack overflows (0 means unlimited).
-pub const MAX_CYCLES: usize = 300;
+pub const MAX_CYCLES: usize = 0;
 
 pub trait LispFunction: Sync {
     fn symbol(&self) -> String;
@@ -139,7 +139,7 @@ impl LispEnv {
             env.encode_number("3.141592653589793"),
         );
 
-        // env.load_core_library().unwrap();
+        env.load_core_library().unwrap();
 
         env
     }
@@ -195,7 +195,7 @@ impl LispEnv {
                 .last()
                 .unwrap();
             println!("--- fetching last stack ptr");
-            self.print_memory();
+            // self.print_memory();
             let frame_symbol_map_ptr = self.memory.borrow()[ptr(last_frame_ptr)].car;
             let symbol_map_properties_ptr = self.symbol_properties(frame_symbol_map_ptr);
             // self.memory.borrow()[ptr(last_stack_symbol_map_ptr)].car;
@@ -206,17 +206,17 @@ impl LispEnv {
             //     Cell::format_component(last_stack_symbol_map_ptr)
             // );
 
-            let property_pointers = self.memory.borrow()[dbg!(ptr(symbol_map_properties_ptr))]
+            let property_pointers = self.memory.borrow()[ptr(symbol_map_properties_ptr)]
                 .iter(self)
                 .collect::<Vec<u64>>();
-            for property_ptr in dbg!(property_pointers) {
+            for property_ptr in property_pointers {
                 let (prop_name, prop_val) = {
                     let prop_cell = &self.memory.borrow()[ptr(property_ptr)];
                     (prop_cell.cdr, prop_cell.car)
                 };
                 // FIXME Super simple copy, actually requires deep copies.
-                self.print_memory();
-                self.append_property(dbg!(frame_map_ptr), prop_name, prop_val);
+                // self.print_memory();
+                self.append_property(frame_map_ptr, prop_name, prop_val);
             }
         }
 
@@ -257,8 +257,14 @@ impl LispEnv {
         // TODO For now we'll assume that there won't be any duplicate keys
 
         let property_name = Cell::decode_symbol_name(prop_name_ptr);
-        if let Some(property_slot_ptr) = self.get_property(symbol_ptr, &dbg!(property_name)) {
-            self.print_memory();
+        println!(
+            "Appending {}: {} to idx {}",
+            property_name,
+            Cell::format_component(prop_val),
+            ptr(symbol_ptr)
+        );
+        if let Some(property_slot_ptr) = self.get_property(symbol_ptr, &property_name) {
+            println!("Replacing symbol value at {}", ptr(property_slot_ptr));
             self.memory.borrow_mut()[ptr(property_slot_ptr)].car = prop_val;
 
             return property_slot_ptr;
@@ -275,7 +281,7 @@ impl LispEnv {
 
         {
             let properties_head_ptr = self.symbol_properties(symbol_ptr);
-            if dbg!(properties_head_ptr) != 0 {
+            if properties_head_ptr != 0 {
                 let last_prop_cell_idx = self.get_last_cell_idx(properties_head_ptr);
                 self.memory.borrow_mut()[last_prop_cell_idx].set_cdr_pointer(prop_slot_idx);
             } else {
@@ -327,15 +333,14 @@ impl LispEnv {
             return None;
         }
 
-        let property_head_ptr = self.symbol_properties(dbg!(symbol_ptr));
-        if dbg!(property_head_ptr) == 0 {
+        let property_head_ptr = self.symbol_properties(symbol_ptr);
+        if property_head_ptr == 0 {
             return None;
         }
 
         let encoded_name = Cell::encode_symbol_name(key).0;
 
-        let prop_list_head = &self.memory.borrow()[dbg!(ptr(property_head_ptr))];
-        self.print_memory();
+        let prop_list_head = &self.memory.borrow()[ptr(property_head_ptr)];
         prop_list_head.iter(self).find(|property_ptr| {
             let prop_cell = &self.memory.borrow()[ptr(*property_ptr)];
             encoded_name == prop_cell.cdr
@@ -366,13 +371,13 @@ impl LispEnv {
     ///                -> [10 | "foo"]
     ///```
     pub fn symbol_properties(&self, symbol_ptr: u64) -> u64 {
-        let root_cell = &self.memory.borrow()[dbg!(ptr(symbol_ptr))];
-        if root_cell.car == 0 || !is_pointer(dbg!(root_cell).car) {
+        let root_cell = &self.memory.borrow()[ptr(symbol_ptr)];
+        if root_cell.car == 0 || !is_pointer(root_cell.car) {
             return 0;
         }
 
         let name_cell = &self.memory.borrow()[ptr(root_cell.car)];
-        dbg!(name_cell).car
+        name_cell.car
     }
 
     pub fn get_last_cell_idx(&self, list_ptr: u64) -> usize {
@@ -461,7 +466,6 @@ mod tests {
     #[test]
     fn global_scope_is_allocated() {
         let env = LispEnv::new();
-        env.print_memory();
         assert_ne!(0, env.internal_symbols_key);
 
         let scope_root = &env.memory.borrow()[ptr(env.internal_symbols_key)];
@@ -510,8 +514,6 @@ mod tests {
         let prop_cell = &env.memory.borrow()[ptr(prop_ptr)];
         assert_eq!(10, as_number(prop_cell.car));
         assert_eq!(Cell::encode_symbol_name("foo").0, prop_cell.cdr);
-
-        env.print_memory();
         assert_eq!(1, env.property_count(symbol_ptr));
     }
 

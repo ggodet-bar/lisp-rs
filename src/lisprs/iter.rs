@@ -17,11 +17,11 @@ impl<'a> Iterator for CellIter<'a> {
             if *next_cell_ptr == 0 {
                 return None;
             }
-            let new_cell = &self.env.memory.borrow()[ptr(dbg!(*next_cell_ptr))];
+            let new_cell = &self.env.memory.borrow()[ptr(*next_cell_ptr)];
             *next_cell_ptr = new_cell.cdr;
             Some(new_cell.car)
         } else {
-            self.next_cell_ptr = Some(dbg!(self.root_cell.cdr));
+            self.next_cell_ptr = Some(self.root_cell.cdr);
             Some(self.root_cell.car)
         }
     }

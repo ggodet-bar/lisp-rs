@@ -8,27 +8,34 @@ pub struct Error;
 
 impl LispEnv {
     fn call_function(&self, function_cell: Cell, arg_list_ptr: u64) -> Result<u64, Error> {
-        let prog_def_cell = self.memory.borrow()[ptr(function_cell.car)].clone();
-        let params_list_ptr = dbg!(prog_def_cell.car);
-        let prog_body = prog_def_cell.cdr;
+        println!(
+            "Calling function {:?} with arg ptr {}",
+            function_cell,
+            Cell::format_component(arg_list_ptr)
+        );
+        let params_list_ptr = function_cell.car;
+        let prog_body = function_cell.cdr;
         let arg_list_ptr = arg_list_ptr;
         // TODO Create a proper frame in which to do the symbol matching
         if self.get_list_length(params_list_ptr) != self.get_list_length(arg_list_ptr) {
             unimplemented!("Param/arg mismatch");
         }
-        let params_list_ptr = self.memory.borrow()[ptr(params_list_ptr)].car;
         let first_param = self.memory.borrow()[ptr(params_list_ptr)].car;
+        // Param is probably a symbol, so we dereference its name
+        let first_param = self.memory.borrow()[ptr(first_param)].car;
         let first_arg = self.memory.borrow()[ptr(arg_list_ptr)].car;
-        println!(
-            "Assigning value {} to param {}",
-            Cell::format_component(first_arg),
-            Cell::format_component(first_param)
-        );
+        let first_arg_result = self.evaluate_atom(first_arg).unwrap();
         let (frame_ptr, previous_frame_idx) = self.allocate_frame();
         println!("New frame ptr: {}", ptr(frame_ptr));
-        self.append_property_to_stack(first_param, first_arg);
+        println!(
+            "Assigning value {} to param {}",
+            Cell::format_component(first_arg_result),
+            Cell::format_component(first_param)
+        );
+        self.append_property_to_stack(first_param, first_arg_result);
         // self.append_property(frame_ptr, first_param, first_arg);
         let result = self.evaluate_atom(prog_body)?;
+        println!("Function result is {}", Cell::format_component(result));
         self.memory.borrow_mut()[previous_frame_idx].cdr = 0; // frame deallocation
         println!("Deallocated frame {}", ptr(frame_ptr));
         Ok(result)
@@ -39,6 +46,8 @@ impl LispEnv {
         if MAX_CYCLES != 0 && *self.cycle_count.borrow() > MAX_CYCLES {
             panic!("Forced exit");
         }
+
+        println!("Evaluating statement {}", Cell::format_component(statement));
 
         if statement == 0 {
             // simple shortcut to stop unnecessary recursions on nil cells
@@ -100,7 +109,7 @@ impl LispEnv {
                 let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
                 let current_frame_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
                 let current_frame = self.memory.borrow()[current_frame_slot].car;
-                let frame_symbols_ptr = dbg!(self.memory.borrow()[dbg!(ptr(current_frame))].car);
+                let frame_symbols_ptr = self.memory.borrow()[dbg!(ptr(current_frame))].car;
                 println!("Resolving symbol {}", symbol_name);
                 if let Some(function) = self.functions.get(&symbol_name) {
                     // let (_, previous_frame_idx) = self.allocate_frame();
@@ -113,14 +122,18 @@ impl LispEnv {
                     // self.memory.borrow_mut()[previous_frame_idx].cdr = 0; // frame deallocation
                     Ok(result)
                 } else if let Some(value_or_func) =
-                    self.get_property(frame_symbols_ptr, &symbol_name)
+                    self.get_property_value(frame_symbols_ptr, &symbol_name)
                 {
                     if is_pointer(value_or_func) {
                         // TODO For now we won't bother that `value_or_func` should probably be a
                         //      symbol pointer, since we have [val | name]
                         let value_cell = self.memory.borrow()[ptr(value_or_func)].clone();
                         println!("Target cell: {:?}", value_cell);
-                        if is_pointer(value_cell.car) && value_cell.cdr == symbol_name_ptr {
+                        if is_pointer(value_cell.car)
+                            && is_pointer(value_cell.cdr)
+                            && value_cell.car != 0
+                            && value_cell.cdr != 0
+                        {
                             self.call_function(value_cell, list_head.cdr)
                         } else {
                             println!("Found value: {}", Cell::format_component(value_or_func));
@@ -131,7 +144,7 @@ impl LispEnv {
                         self.evaluate_atom(value_or_func)
                     }
                 } else {
-                    println!("Didn't find function for {}", symbol_name);
+                    println!("Didn't find value/function for {}", symbol_name);
                     Ok(statement)
                 }
             } else if is_pointer(list_head.car) {
@@ -188,7 +201,7 @@ mod tests {
 
         env.print_memory();
         let result = result.unwrap();
-        let list_cell = &env.memory.borrow()[ptr(dbg!(result))];
+        let list_cell = &env.memory.borrow()[ptr(result)];
         let symbol_ptrs = list_cell.iter(&env).collect::<Vec<u64>>();
         assert_eq!(symbol_ptrs[0], symbol_ptrs[1]);
         assert_eq!(symbol_ptrs[0], symbol_ptrs[2]);
@@ -346,15 +359,17 @@ mod tests {
     fn call_small_program() {
         let mut env = LispEnv::new();
         let program = env.parse("(def foo (X) X)\n(foo 42)").unwrap();
+        println!("-----");
         let result = env.evaluate(program);
         assert!(result.is_ok());
 
+        env.print_memory();
         let result = result.unwrap();
         assert_eq!(42, as_number(result));
     }
 
     #[test]
-    fn eval_simple_recursion() {
+    fn eval_simple_recursion_terminator() {
         let mut env = LispEnv::new();
         let program = env
             .parse(
@@ -364,20 +379,149 @@ mod tests {
     	    if (<= N 1) N (simprec (- N 1))
     	)
     )
-    (simprec 2)"#,
+    (simprec 1)"#,
             )
             .unwrap();
 
-        // FIXME Handle erasing previous value property!
-
-        env.print_memory();
         let result = env.evaluate(program);
-        println!("Res: {:?}", result);
         assert!(result.is_ok());
+        assert_eq!(as_number(result.unwrap()), 1);
     }
 
     #[test]
-    fn parse_fibonacci_function() {
+    fn eval_simple_recursion_many_iterations() {
+        let mut env = LispEnv::new();
+        let program = env
+            .parse(
+                r#"
+    (def simprec (N)
+    	(
+    	    if (<= N 1) N (simprec (- N 1))
+    	)
+    )
+    (simprec 10)"#,
+            )
+            .unwrap();
+
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+        assert_eq!(as_number(result.unwrap()), 1);
+    }
+
+    #[test]
+    fn eval_simple_recursion_combined_with_operation() {
+        let mut env = LispEnv::new();
+        let program = env
+            .parse(
+                r#"
+    (def simprec (N)
+    	(
+    	    if (<= N 1) N (+ 2 (simprec (- N 1)))
+    	)
+    )
+    (simprec 10)"#,
+            )
+            .unwrap();
+
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+        assert_eq!(as_number(result.unwrap()), 19);
+    }
+
+    #[test]
+    fn eval_fibonacci_function_second_entry() {
+        let mut env = LispEnv::new();
+        let program = env
+            .parse(
+                r#"
+    (def fib (N)
+    	(if (<= N 1) N (+ (fib (- N 1)) (fib (- N 2)))))
+    (fib 2)"#,
+            )
+            .unwrap();
+        // returns the nth item in the Fibonacci sequence
+        println!("------");
+        let result = env.evaluate(program);
+        println!("Res: {:?}", result);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        println!("Result: {}", Cell::format_component(result));
+
+        assert_eq!(1, as_number(result));
+    }
+
+    #[test]
+    fn eval_fibonacci_function_third_entry() {
+        let mut env = LispEnv::new();
+        let program = env
+            .parse(
+                r#"
+    (def fib (N)
+    	(if (<= N 1) N (+ (fib (- N 1)) (fib (- N 2)))))
+    (fib 3)"#,
+            )
+            .unwrap();
+        // returns the nth item in the Fibonacci sequence
+        println!("------");
+        let result = env.evaluate(program);
+        println!("Res: {:?}", result);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        println!("Result: {}", Cell::format_component(result));
+
+        assert_eq!(2, as_number(result));
+    }
+
+    #[test]
+    fn eval_fibonacci_function_fourth_entry() {
+        let mut env = LispEnv::new();
+        let program = env
+            .parse(
+                r#"
+    (def fib (N)
+    	(if (<= N 1) N (+ (fib (- N 1)) (fib (- N 2)))))
+    (fib 4)"#,
+            )
+            .unwrap();
+        // returns the nth item in the Fibonacci sequence
+        println!("------");
+        let result = env.evaluate(program);
+        println!("Res: {:?}", result);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        println!("Result: {}", Cell::format_component(result));
+
+        assert_eq!(3, as_number(result));
+    }
+
+    #[test]
+    fn eval_fibonacci_function_fifth_entry() {
+        let mut env = LispEnv::new();
+        let program = env
+            .parse(
+                r#"
+    (def fib (N)
+    	(if (<= N 1) N (+ (fib (- N 1)) (fib (- N 2)))))
+    (fib 5)"#,
+            )
+            .unwrap();
+        // returns the nth item in the Fibonacci sequence
+        println!("------");
+        let result = env.evaluate(program);
+        println!("Res: {:?}", result);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        println!("Result: {}", Cell::format_component(result));
+
+        assert_eq!(5, as_number(result));
+    }
+
+    #[test]
+    fn eval_fibonacci_function_tenth_entry() {
         let mut env = LispEnv::new();
         let program = env
             .parse(
