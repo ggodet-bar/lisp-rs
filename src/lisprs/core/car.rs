@@ -2,6 +2,7 @@ use crate::lisprs::cell::Cell;
 use crate::lisprs::lisp_env::LispFunction;
 use crate::lisprs::util::{is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
+use log::*;
 
 pub struct Car;
 
@@ -13,7 +14,7 @@ impl LispFunction for Car {
     fn function(&self, arg_idx: usize, env: &LispEnv) -> u64 {
         let first_arg_ptr = env.memory.borrow()[arg_idx].car;
         let first_arg_result = env.evaluate_atom(first_arg_ptr).unwrap();
-        println!(
+        trace!(
             "First arg ptr: {}",
             Cell::format_component(first_arg_result)
         );
@@ -24,7 +25,7 @@ impl LispFunction for Car {
             unimplemented!()
         } else {
             let result = env.memory.borrow()[ptr(first_arg_result)].car;
-            println!("Car result {}", Cell::format_component(result));
+            trace!("Car result {}", Cell::format_component(result));
 
             result
         }

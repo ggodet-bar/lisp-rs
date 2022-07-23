@@ -2,13 +2,14 @@ use crate::lisprs::cell::Cell;
 use crate::lisprs::lisp_env::MAX_CYCLES;
 use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
+use log::*;
 
 #[derive(PartialEq, Debug)]
 pub struct Error;
 
 impl LispEnv {
     fn call_function(&self, function_cell: Cell, arg_list_ptr: u64) -> Result<u64, Error> {
-        println!(
+        trace!(
             "Calling function {:?} with arg ptr {}",
             function_cell,
             Cell::format_component(arg_list_ptr)
@@ -26,8 +27,8 @@ impl LispEnv {
         let first_arg = self.memory.borrow()[ptr(arg_list_ptr)].car;
         let first_arg_result = self.evaluate_atom(first_arg).unwrap();
         let (frame_ptr, previous_frame_idx) = self.allocate_frame();
-        println!("New frame ptr: {}", ptr(frame_ptr));
-        println!(
+        trace!("New frame ptr: {}", ptr(frame_ptr));
+        trace!(
             "Assigning value {} to param {}",
             Cell::format_component(first_arg_result),
             Cell::format_component(first_param)
@@ -35,9 +36,9 @@ impl LispEnv {
         self.append_property_to_stack(first_param, first_arg_result);
         // self.append_property(frame_ptr, first_param, first_arg);
         let result = self.evaluate_atom(prog_body)?;
-        println!("Function result is {}", Cell::format_component(result));
+        trace!("Function result is {}", Cell::format_component(result));
         self.memory.borrow_mut()[previous_frame_idx].cdr = 0; // frame deallocation
-        println!("Deallocated frame {}", ptr(frame_ptr));
+        trace!("Deallocated frame {}", ptr(frame_ptr));
         Ok(result)
     }
 
@@ -47,7 +48,7 @@ impl LispEnv {
             panic!("Forced exit");
         }
 
-        println!("Evaluating statement {}", Cell::format_component(statement));
+        trace!("Evaluating statement {}", Cell::format_component(statement));
 
         if statement == 0 {
             // simple shortcut to stop unnecessary recursions on nil cells
@@ -60,9 +61,9 @@ impl LispEnv {
             let last_frame_ptr = self.memory.borrow()[last_stack_idx].car;
             let stack_symbols = self.memory.borrow()[ptr(last_frame_ptr)].car;
             let symbol_name = Cell::decode_symbol_name(symbol_cell_car);
-            println!("Resolving value of symbol {}", symbol_name);
+            trace!("Resolving value of symbol {}", symbol_name);
             if let Some(value) = self.get_property_value(stack_symbols, &symbol_name) {
-                println!(
+                trace!(
                     "Found value for {}: {}",
                     symbol_name,
                     Cell::format_component(value)
@@ -70,7 +71,7 @@ impl LispEnv {
                 // returned value will be a SLOT, not the property itself
                 self.evaluate_atom(value)
             } else {
-                println!("Did not find value for {}", symbol_name);
+                trace!("Did not find value for {}", symbol_name);
                 Ok(statement)
             }
         } else if is_pointer(statement) {
@@ -109,17 +110,15 @@ impl LispEnv {
                 let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
                 let current_frame_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
                 let current_frame = self.memory.borrow()[current_frame_slot].car;
-                let frame_symbols_ptr = self.memory.borrow()[dbg!(ptr(current_frame))].car;
-                println!("Resolving symbol {}", symbol_name);
+                let frame_symbols_ptr = self.memory.borrow()[ptr(current_frame)].car;
+                trace!("Resolving symbol {}", symbol_name);
                 if let Some(function) = self.functions.get(&symbol_name) {
-                    // let (_, previous_frame_idx) = self.allocate_frame();
-                    println!(
+                    trace!(
                         "Calling function {} on memory idx {}",
                         symbol_name,
                         ptr(list_head.cdr)
                     );
                     let result = function.function(ptr(list_head.cdr), self);
-                    // self.memory.borrow_mut()[previous_frame_idx].cdr = 0; // frame deallocation
                     Ok(result)
                 } else if let Some(value_or_func) =
                     self.get_property_value(frame_symbols_ptr, &symbol_name)
@@ -128,27 +127,26 @@ impl LispEnv {
                         // TODO For now we won't bother that `value_or_func` should probably be a
                         //      symbol pointer, since we have [val | name]
                         let value_cell = self.memory.borrow()[ptr(value_or_func)].clone();
-                        println!("Target cell: {:?}", value_cell);
+                        trace!("Target cell: {:?}", value_cell);
                         if is_pointer(value_cell.car)
                             && is_pointer(value_cell.cdr)
-                            && value_cell.car != 0
-                            && value_cell.cdr != 0
+                            && !value_cell.is_nil()
                         {
                             self.call_function(value_cell, list_head.cdr)
                         } else {
-                            println!("Found value: {}", Cell::format_component(value_or_func));
+                            trace!("Found value: {}", Cell::format_component(value_or_func));
                             self.evaluate_atom(value_cell.car)
                         }
                     } else {
-                        println!("Found value: {}", Cell::format_component(value_or_func));
+                        trace!("Found value: {}", Cell::format_component(value_or_func));
                         self.evaluate_atom(value_or_func)
                     }
                 } else {
-                    println!("Didn't find value/function for {}", symbol_name);
+                    trace!("Didn't find value/function for {}", symbol_name);
                     Ok(statement)
                 }
             } else if is_pointer(list_head.car) {
-                println!("Found pointer to {}", ptr(list_head.car));
+                trace!("Found pointer to {}", ptr(list_head.car));
                 let result = self.evaluate_atom(list_head.car)?;
                 if list_head.cdr == 0 {
                     return Ok(result);
@@ -174,6 +172,7 @@ mod tests {
         as_number, is_number, is_pointer, is_symbol_ptr, number_pointer, ptr,
     };
     use crate::lisprs::LispEnv;
+    use log::*;
 
     #[test]
     fn single_number_as_itself() {
@@ -359,7 +358,7 @@ mod tests {
     fn call_small_program() {
         let mut env = LispEnv::new();
         let program = env.parse("(def foo (X) X)\n(foo 42)").unwrap();
-        println!("-----");
+        trace!("-----");
         let result = env.evaluate(program);
         assert!(result.is_ok());
 
@@ -440,13 +439,13 @@ mod tests {
             )
             .unwrap();
         // returns the nth item in the Fibonacci sequence
-        println!("------");
+        trace!("------");
         let result = env.evaluate(program);
-        println!("Res: {:?}", result);
+        trace!("Res: {:?}", result);
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        println!("Result: {}", Cell::format_component(result));
+        trace!("Result: {}", Cell::format_component(result));
 
         assert_eq!(1, as_number(result));
     }
@@ -463,13 +462,13 @@ mod tests {
             )
             .unwrap();
         // returns the nth item in the Fibonacci sequence
-        println!("------");
+        trace!("------");
         let result = env.evaluate(program);
-        println!("Res: {:?}", result);
+        trace!("Res: {:?}", result);
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        println!("Result: {}", Cell::format_component(result));
+        trace!("Result: {}", Cell::format_component(result));
 
         assert_eq!(2, as_number(result));
     }
@@ -486,13 +485,13 @@ mod tests {
             )
             .unwrap();
         // returns the nth item in the Fibonacci sequence
-        println!("------");
+        trace!("------");
         let result = env.evaluate(program);
-        println!("Res: {:?}", result);
+        trace!("Res: {:?}", result);
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        println!("Result: {}", Cell::format_component(result));
+        trace!("Result: {}", Cell::format_component(result));
 
         assert_eq!(3, as_number(result));
     }
@@ -509,13 +508,13 @@ mod tests {
             )
             .unwrap();
         // returns the nth item in the Fibonacci sequence
-        println!("------");
+        trace!("------");
         let result = env.evaluate(program);
-        println!("Res: {:?}", result);
+        trace!("Res: {:?}", result);
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        println!("Result: {}", Cell::format_component(result));
+        trace!("Result: {}", Cell::format_component(result));
 
         assert_eq!(5, as_number(result));
     }
@@ -532,15 +531,16 @@ mod tests {
             )
             .unwrap();
         // returns the nth item in the Fibonacci sequence
-        println!("------");
+        trace!("------");
         let result = env.evaluate(program);
-        println!("Res: {:?}", result);
+        trace!("Res: {:?}", result);
         assert!(result.is_ok());
 
         let result = result.unwrap();
-        println!("Result: {}", Cell::format_component(result));
+        trace!("Result: {}", Cell::format_component(result));
 
         env.print_memory();
         assert_eq!(55, as_number(result));
+        trace!("Memory size: {}", env.memory_size());
     }
 }

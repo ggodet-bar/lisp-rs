@@ -77,6 +77,7 @@ impl Cell {
         String::from_utf8(buffer[0..buffer_len].to_vec()).unwrap_or(String::from("***ERR***"))
     }
 
+    #[inline]
     pub fn encode_symbol_name(name: &str) -> (u64, &[u8]) {
         let mut result = 0b0010_u64; // starting with a short number, for now
         let byte_representation = name.as_bytes();

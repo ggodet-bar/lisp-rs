@@ -1,6 +1,7 @@
 use crate::lisprs::lisp_env::LispFunction;
 use crate::lisprs::util::{as_number, is_number, number_pointer};
 use crate::lisprs::LispEnv;
+use log::*;
 
 pub struct Add;
 
@@ -15,7 +16,7 @@ impl LispFunction for Add {
             let mut current_cell = env.memory.borrow()[args_idx].clone();
 
             loop {
-                println!("+ current cell: {:?}", current_cell);
+                trace!("+ current cell: {:?}", current_cell);
 
                 let value = env.evaluate_atom(current_cell.car).unwrap();
                 if !is_number(value) {
@@ -23,7 +24,7 @@ impl LispFunction for Add {
                 }
 
                 sum += as_number(value);
-                println!("current sum: {}", sum);
+                trace!("current sum: {}", sum);
 
                 if current_cell.cdr == 0 {
                     break;

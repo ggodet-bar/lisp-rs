@@ -2,6 +2,7 @@ use crate::lisprs::cell::Cell;
 use crate::lisprs::core::CORE_FUNCTIONS;
 use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, number_pointer, ptr};
 use crate::lisprs::Assets;
+use log::*;
 use slab::Slab;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -65,7 +66,7 @@ impl LispEnv {
             let cell = &mut self.memory.borrow_mut()[cell_key];
             if let Some(name) = name {
                 let (name_fragment, rest) = Cell::encode_symbol_name(name);
-                // println!("Name frag: {:#b}", name_fragment);
+                // trace!("Name frag: {:#b}", name_fragment);
                 if rest.is_empty() {
                     cell.car = name_fragment;
                 } else {
@@ -75,7 +76,7 @@ impl LispEnv {
             cell.cdr = value_ptr;
         }
 
-        // println!("Symbol allocated at idx {}", cell_key);
+        // trace!("Symbol allocated at idx {}", cell_key);
 
         (cell_key as u64) << 4 | 0b1000
     }
@@ -146,14 +147,12 @@ impl LispEnv {
 
     fn load_core_library(&mut self) -> Result<(), ()> {
         for file in Assets::iter() {
-            println!("Load {}", file.as_ref());
+            trace!("Load {}", file.as_ref());
             let raw = Assets::get(file.as_ref()).unwrap().data;
             let contents = std::str::from_utf8(&raw).unwrap();
-            println!("Contents of {}: {}", file.as_ref(), contents);
 
             let program = self.parse(contents).unwrap();
-            let result = self.evaluate(program).unwrap();
-            println!("Result is {}", Cell::format_component(result));
+            let _result = self.evaluate(program).unwrap();
         }
 
         Ok(())
@@ -194,13 +193,13 @@ impl LispEnv {
                 .iter(self)
                 .last()
                 .unwrap();
-            println!("--- fetching last stack ptr");
+            trace!("--- fetching last stack ptr");
             // self.print_memory();
             let frame_symbol_map_ptr = self.memory.borrow()[ptr(last_frame_ptr)].car;
             let symbol_map_properties_ptr = self.symbol_properties(frame_symbol_map_ptr);
             // self.memory.borrow()[ptr(last_stack_symbol_map_ptr)].car;
             // self.print_memory();
-            // println!(
+            // trace!(
             //     "Last stack: {:?}, {:?}",
             //     Cell::format_component(last_stack_ptr),
             //     Cell::format_component(last_stack_symbol_map_ptr)
@@ -231,7 +230,7 @@ impl LispEnv {
         let stack_tail_car = {
             let stack_head_cell = &self.memory.borrow()[self.stack_frames];
             let last_frame_ptr = stack_head_cell.iter(self).last().unwrap();
-            println!("Will append to stack idx {}", ptr(last_frame_ptr));
+            trace!("Will append to stack idx {}", ptr(last_frame_ptr));
             self.memory.borrow()[ptr(last_frame_ptr)].car
             // remember that this returns the last VALUE, mot the last list SLOT!
         };
@@ -257,14 +256,14 @@ impl LispEnv {
         // TODO For now we'll assume that there won't be any duplicate keys
 
         let property_name = Cell::decode_symbol_name(prop_name_ptr);
-        println!(
+        trace!(
             "Appending {}: {} to idx {}",
             property_name,
             Cell::format_component(prop_val),
             ptr(symbol_ptr)
         );
         if let Some(property_slot_ptr) = self.get_property(symbol_ptr, &property_name) {
-            println!("Replacing symbol value at {}", ptr(property_slot_ptr));
+            trace!("Replacing symbol value at {}", ptr(property_slot_ptr));
             self.memory.borrow_mut()[ptr(property_slot_ptr)].car = prop_val;
 
             return property_slot_ptr;
@@ -320,6 +319,12 @@ impl LispEnv {
         for (idx, cell) in &*self.memory.borrow() {
             println!("{}: {:?}", idx, cell);
         }
+    }
+
+    /// Returns the size of the used memory, in bytes
+    pub(crate) fn memory_size(&self) -> usize {
+        self.memory.borrow().len() * 16
+        // counts the number of cells, with a single cell containing 2 * u64
     }
 
     pub(crate) fn global_scope_contains_property(&self, name: &str) -> bool {
@@ -606,7 +611,7 @@ mod tests {
         let symbol_ptr = env.allocate_symbol(Some("symb"), 0);
         let first_name_ptr = Cell::encode_symbol_name("foo").0;
         let first_prop_ptr = env.append_property(symbol_ptr, first_name_ptr, 0);
-        println!("Foo prop ptr is {}", ptr(first_prop_ptr));
+        trace!("Foo prop ptr is {}", ptr(first_prop_ptr));
         env.print_memory();
         // FIXME The issue is that the property 'foo' is not a symbol. What should be returned should
         //       be the property slot, which happens to be structured like a symbol
@@ -623,7 +628,7 @@ mod tests {
             Cell::encode_symbol_name("bar").0,
             number_pointer(42),
         );
-        println!("Bar prop slot is {}", ptr(nested_prop_slot));
+        trace!("Bar prop slot is {}", ptr(nested_prop_slot));
         env.print_memory();
         // expected symbol structure:
         // symb:

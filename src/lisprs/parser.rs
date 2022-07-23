@@ -1,6 +1,7 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::util::as_ptr;
 use crate::lisprs::LispEnv;
+use log::*;
 use pest::iterators::{Pair, Pairs};
 use pest::Parser as PestParser;
 use pest_derive::Parser;
@@ -18,7 +19,7 @@ impl LispEnv {
             Rule::number => self.encode_number(atom.as_str()),
             Rule::symbol => {
                 let symbol_name = atom.as_str();
-                println!("Allocating symbol {}", symbol_name);
+                trace!("Allocating symbol {}", symbol_name);
                 // if self.get_property(self.internal_symbols_key)
                 self.allocate_symbol(Some(symbol_name), self.nil_key)
             }
@@ -57,7 +58,7 @@ impl LispEnv {
 
     /// Returns the pointer to the list
     fn parse_list(&mut self, atoms: Pairs<Rule>) -> Result<u64, pest::error::Error<Rule>> {
-        // println!("--- LIST atoms {:?}", atoms);
+        // trace!("--- LIST atoms {:?}", atoms);
         let mut result = 0_u64; // pointer to nil
         let mut list_tail_ptr = 0_usize;
 
@@ -67,7 +68,7 @@ impl LispEnv {
                 car: atom_value,
                 cdr: 0,
             });
-            // println!("Appending cell at idx {}", new_cell_idx);
+            // trace!("Appending cell at idx {}", new_cell_idx);
             if result == 0 {
                 result = as_ptr(new_cell_idx); // then result acts as the list head
             }
@@ -90,7 +91,7 @@ impl LispEnv {
             .unwrap()
             .into_inner();
 
-        println!("Root: {:?}", root);
+        trace!("Root: {:?}", root);
         let mut statements_list_head_ptr = 0_usize;
         let mut current_statement_ptr = 0_usize;
         for statement in root {
@@ -426,7 +427,7 @@ mod tests {
     //         env.print_memory();
     //
     //         let root_cell = &env.memory.borrow()[ptr(result)];
-    //         println!("Root cell: {:?}", root_cell);
+    //         trace!("Root cell: {:?}", root_cell);
     //         assert!(is_symbol_ptr(root_cell.car));
     //         assert_ne!(0, root_cell.cdr);
     //

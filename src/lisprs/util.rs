@@ -25,6 +25,7 @@ pub fn true_symbol() -> u64 {
     Cell::encode_symbol_name("T").0
 }
 
+#[inline]
 pub fn ptr(val: u64) -> usize {
     if !is_pointer(val) {
         panic!("Not a pointer: {}!", Cell::format_component(val));

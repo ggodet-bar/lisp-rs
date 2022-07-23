@@ -9,6 +9,7 @@ edition = "2021"
 clap = { version = "3.1", features = [ "derive" ] }
 err-derive = "0.3"
 filesystem = "0.4"
+log = "0.4"
 pest = "2.1"
 pest_derive = "2.1"
 rust-embed = { version = "6.4", features = [ "debug-embed"] }
