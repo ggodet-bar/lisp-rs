@@ -1,4 +1,5 @@
 use crate::lisprs::cell::Cell;
+use crate::lisprs::lisp_env::MAX_CYCLES;
 use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
 
@@ -6,31 +7,61 @@ use crate::lisprs::LispEnv;
 pub struct Error;
 
 impl LispEnv {
+    fn call_function(&self, function_cell: Cell, arg_list_ptr: u64) -> Result<u64, Error> {
+        let prog_def_cell = self.memory.borrow()[ptr(function_cell.car)].clone();
+        let params_list_ptr = dbg!(prog_def_cell.car);
+        let prog_body = prog_def_cell.cdr;
+        let arg_list_ptr = arg_list_ptr;
+        // TODO Create a proper frame in which to do the symbol matching
+        if self.get_list_length(params_list_ptr) != self.get_list_length(arg_list_ptr) {
+            unimplemented!("Param/arg mismatch");
+        }
+        let params_list_ptr = self.memory.borrow()[ptr(params_list_ptr)].car;
+        let first_param = self.memory.borrow()[ptr(params_list_ptr)].car;
+        let first_arg = self.memory.borrow()[ptr(arg_list_ptr)].car;
+        println!(
+            "Assigning value {} to param {}",
+            Cell::format_component(first_arg),
+            Cell::format_component(first_param)
+        );
+        let (frame_ptr, previous_frame_idx) = self.allocate_frame();
+        println!("New frame ptr: {}", ptr(frame_ptr));
+        self.append_property_to_stack(first_param, first_arg);
+        // self.append_property(frame_ptr, first_param, first_arg);
+        let result = self.evaluate_atom(prog_body)?;
+        self.memory.borrow_mut()[previous_frame_idx].cdr = 0; // frame deallocation
+        println!("Deallocated frame {}", ptr(frame_ptr));
+        Ok(result)
+    }
+
     pub(crate) fn evaluate_atom(&self, statement: u64) -> Result<u64, Error> {
+        *self.cycle_count.borrow_mut() += 1;
+        if MAX_CYCLES != 0 && *self.cycle_count.borrow() > MAX_CYCLES {
+            panic!("Forced exit");
+        }
+
         if statement == 0 {
             // simple shortcut to stop unnecessary recursions on nil cells
             Ok(0)
         } else if is_number(statement) {
             Ok(statement)
         } else if is_symbol_ptr(statement) {
-            // TODO Should check in the current context!
             let symbol_cell_car = self.memory.borrow()[ptr(statement)].car;
-            if let Some(value) = self.get_property_value(
-                self.internal_symbols_key,
-                &Cell::decode_symbol_name(symbol_cell_car),
-            ) {
+            let last_stack_idx = self.get_last_cell_idx(as_ptr(self.stack_frames));
+            let last_frame_ptr = self.memory.borrow()[last_stack_idx].car;
+            let stack_symbols = self.memory.borrow()[ptr(last_frame_ptr)].car;
+            let symbol_name = Cell::decode_symbol_name(symbol_cell_car);
+            println!("Resolving value of symbol {}", symbol_name);
+            if let Some(value) = self.get_property_value(stack_symbols, &symbol_name) {
                 println!(
                     "Found value for {}: {}",
-                    Cell::decode_symbol_name(symbol_cell_car),
-                    value
+                    symbol_name,
+                    Cell::format_component(value)
                 );
                 // returned value will be a SLOT, not the property itself
                 self.evaluate_atom(value)
             } else {
-                println!(
-                    "Did not find value for {}",
-                    Cell::decode_symbol_name(symbol_cell_car)
-                );
+                println!("Did not find value for {}", symbol_name);
                 Ok(statement)
             }
         } else if is_pointer(statement) {
@@ -67,16 +98,22 @@ impl LispEnv {
             } else if is_symbol_ptr(list_head.car) {
                 let symbol_name_ptr = self.memory.borrow()[ptr(list_head.car)].car;
                 let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
+                let current_frame_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
+                let current_frame = self.memory.borrow()[current_frame_slot].car;
+                let frame_symbols_ptr = dbg!(self.memory.borrow()[dbg!(ptr(current_frame))].car);
                 println!("Resolving symbol {}", symbol_name);
                 if let Some(function) = self.functions.get(&symbol_name) {
+                    // let (_, previous_frame_idx) = self.allocate_frame();
                     println!(
                         "Calling function {} on memory idx {}",
                         symbol_name,
                         ptr(list_head.cdr)
                     );
-                    Ok(function.function(ptr(list_head.cdr), self))
+                    let result = function.function(ptr(list_head.cdr), self);
+                    // self.memory.borrow_mut()[previous_frame_idx].cdr = 0; // frame deallocation
+                    Ok(result)
                 } else if let Some(value_or_func) =
-                    self.get_property(self.internal_symbols_key, &symbol_name)
+                    self.get_property(frame_symbols_ptr, &symbol_name)
                 {
                     if is_pointer(value_or_func) {
                         // TODO For now we won't bother that `value_or_func` should probably be a
@@ -84,27 +121,7 @@ impl LispEnv {
                         let value_cell = self.memory.borrow()[ptr(value_or_func)].clone();
                         println!("Target cell: {:?}", value_cell);
                         if is_pointer(value_cell.car) && value_cell.cdr == symbol_name_ptr {
-                            let prog_def_cell = self.memory.borrow()[ptr(value_cell.car)].clone();
-                            let params_list_ptr = dbg!(prog_def_cell.car);
-                            let prog_body = prog_def_cell.cdr;
-                            let arg_list_ptr = list_head.cdr;
-                            // TODO Create a proper frame in which to do the symbol matching
-                            if self.get_list_length(params_list_ptr)
-                                != self.get_list_length(arg_list_ptr)
-                            {
-                                unimplemented!("Param/arg mismatch");
-                            }
-                            let params_list_ptr = self.memory.borrow()[ptr(params_list_ptr)].car;
-                            let first_param = self.memory.borrow()[ptr(params_list_ptr)].car;
-                            let first_arg = self.memory.borrow()[ptr(arg_list_ptr)].car;
-                            println!(
-                                "Assigning value {} to param {}",
-                                Cell::format_component(first_arg),
-                                Cell::format_component(first_param)
-                            );
-                            // FIXME Handle a proper function scope
-                            self.append_property(self.internal_symbols_key, first_param, first_arg);
-                            self.evaluate_atom(prog_body)
+                            self.call_function(value_cell, list_head.cdr)
                         } else {
                             println!("Found value: {}", Cell::format_component(value_or_func));
                             self.evaluate_atom(value_cell.car)
@@ -115,7 +132,7 @@ impl LispEnv {
                     }
                 } else {
                     println!("Didn't find function for {}", symbol_name);
-                    Ok(symbol_name_ptr)
+                    Ok(statement)
                 }
             } else if is_pointer(list_head.car) {
                 println!("Found pointer to {}", ptr(list_head.car));
@@ -160,6 +177,21 @@ mod tests {
 
         let result = result.unwrap();
         assert_eq!(Cell::encode_symbol_name("a").0, result);
+    }
+
+    #[test]
+    fn unify_symbol_references_in_same_scope() {
+        let mut env = LispEnv::new();
+        let program = env.parse("(a a a)").unwrap();
+        let result = env.evaluate(program);
+        assert!(result.is_ok());
+
+        env.print_memory();
+        let result = result.unwrap();
+        let list_cell = &env.memory.borrow()[ptr(dbg!(result))];
+        let symbol_ptrs = list_cell.iter(&env).collect::<Vec<u64>>();
+        assert_eq!(symbol_ptrs[0], symbol_ptrs[1]);
+        assert_eq!(symbol_ptrs[0], symbol_ptrs[2]);
     }
 
     #[test]
@@ -322,6 +354,29 @@ mod tests {
     }
 
     #[test]
+    fn eval_simple_recursion() {
+        let mut env = LispEnv::new();
+        let program = env
+            .parse(
+                r#"
+    (def simprec (N)
+    	(
+    	    if (<= N 1) N (simprec (- N 1))
+    	)
+    )
+    (simprec 2)"#,
+            )
+            .unwrap();
+
+        // FIXME Handle erasing previous value property!
+
+        env.print_memory();
+        let result = env.evaluate(program);
+        println!("Res: {:?}", result);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn parse_fibonacci_function() {
         let mut env = LispEnv::new();
         let program = env
@@ -334,7 +389,6 @@ mod tests {
             .unwrap();
         // returns the nth item in the Fibonacci sequence
         println!("------");
-        todo!("Implement proper function frames to avoid stack overflows");
         let result = env.evaluate(program);
         println!("Res: {:?}", result);
         assert!(result.is_ok());

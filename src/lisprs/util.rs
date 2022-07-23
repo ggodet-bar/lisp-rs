@@ -27,7 +27,7 @@ pub fn true_symbol() -> u64 {
 
 pub fn ptr(val: u64) -> usize {
     if !is_pointer(val) {
-        panic!("Not a pointer: {:#b}!", val);
+        panic!("Not a pointer: {}!", Cell::format_component(val));
     }
 
     (val >> 4) as usize

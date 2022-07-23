@@ -1,3 +1,4 @@
+use crate::lisprs::cell::Cell;
 use crate::lisprs::lisp_env::LispFunction;
 use crate::lisprs::util::{is_pointer, ptr};
 use crate::lisprs::LispEnv;
@@ -10,19 +11,18 @@ impl LispFunction for Def {
     }
 
     fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
-        let value_head = match env.get_list_length((args_idx as u64) << 4) {
+        let arg_values = env.memory.borrow()[args_idx]
+            .iter(&env)
+            .collect::<Vec<u64>>();
+        let value_head = match arg_values.len() {
             2 => {
-                let (value_head, symbol_cell_idx) = {
-                    let memory = env.memory.borrow();
-                    let args = &memory[args_idx];
-                    println!("arg cell: {:?}", args);
+                let symbol_ptr = arg_values[0];
+                let symbol_name_ptr = env.memory.borrow()[ptr(symbol_ptr)].car;
+                let symbol_value_ptr = arg_values[1];
 
-                    (memory[args.cdr_ptr()].car, args.car_ptr())
-                };
-
-                let name_ptr = env.memory.borrow()[symbol_cell_idx].car;
-                env.append_property(env.internal_symbols_key, name_ptr, value_head);
-                value_head
+                let prop_slot = env.append_property_to_stack(symbol_name_ptr, symbol_value_ptr);
+                println!("Appended property to slot {}", ptr(prop_slot));
+                symbol_value_ptr
             }
             3 => {
                 let (name_car, arg_list_car, body_car) = {
@@ -39,15 +39,14 @@ impl LispFunction for Def {
 
                     (name_arg, arg_list_cell.car, program_body_cell.car)
                 };
-                let result_ptr = env.allocate_empty_cell();
-                {
-                    let mut result = &mut env.memory.borrow_mut()[result_ptr];
-                    result.car = arg_list_car;
-                    result.cdr = body_car;
-                }
+                let result_ptr = env.insert_cell(Cell {
+                    car: arg_list_car,
+                    cdr: body_car,
+                });
 
                 let result_ptr = (result_ptr as u64) << 4;
-                env.append_property(env.internal_symbols_key, name_car, result_ptr);
+                env.print_memory();
+                env.append_property_to_stack(name_car, result_ptr);
 
                 result_ptr
             }

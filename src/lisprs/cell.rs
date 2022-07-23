@@ -42,6 +42,10 @@ impl Cell {
         self.cdr & 0b1110 == 0 // CDR is a pointer
     }
 
+    pub fn is_nil(&self) -> bool {
+        self.car == 0 && self.cdr == 0
+    }
+
     pub fn set_car_pointer(&mut self, raw_addr: usize) {
         self.car = as_ptr(raw_addr);
     }

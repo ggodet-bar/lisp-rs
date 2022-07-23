@@ -1,11 +1,15 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::core::CORE_FUNCTIONS;
-use crate::lisprs::util::{is_number, is_pointer, is_symbol_ptr, number_pointer, ptr};
+use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, number_pointer, ptr};
 use crate::lisprs::Assets;
 use slab::Slab;
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::str::FromStr;
+
+/// TEMP: Max number of evaluation cycles before the evaluation is forcibly stopped. Used to
+///       debug stack overflows (0 means unlimited).
+pub const MAX_CYCLES: usize = 300;
 
 pub trait LispFunction: Sync {
     fn symbol(&self) -> String;
@@ -23,8 +27,14 @@ pub struct LispEnv {
     /// Pointer to an in-memory list of namespaces within the current evaluation scope.
     pub(crate) namespaces_idx: usize,
 
+    /// Pointer to the in-memory list of function stacks built on top of the global namespace. A
+    /// frame is defined a list cell whose CAR points at a local symbol map.
+    pub(crate) stack_frames: usize,
+
     pub(crate) functions: HashMap<String, &'static dyn LispFunction>,
-    pub(crate) call_stack: VecDeque<Option<String>>,
+
+    /// cf MAX_CYCLES
+    pub(crate) cycle_count: RefCell<usize>,
 }
 
 impl LispEnv {
@@ -96,16 +106,25 @@ impl LispEnv {
             nil_key: 0,
             internal_symbols_key: 0,
             namespaces_idx: 0,
+            stack_frames: 0,
             functions: HashMap::new(),
-            call_stack: VecDeque::new(),
+            cycle_count: RefCell::new(0),
         };
         env.nil_key = env.allocate_nil() as u64;
         env.internal_symbols_key = env.allocate_symbol(Some("_lisprs"), env.nil_key) as u64;
-        env.namespaces_idx = env.allocate_empty_cell();
-        {
-            let namespaces_cell = &mut env.memory.borrow_mut()[env.namespaces_idx];
-            namespaces_cell.car = env.internal_symbols_key;
-        }
+        env.namespaces_idx = env.insert_cell(Cell {
+            car: env.internal_symbols_key,
+            cdr: 0,
+        });
+        let root_frame = env.insert_cell(Cell {
+            car: env.internal_symbols_key,
+            cdr: 0,
+        });
+        env.stack_frames = env.insert_cell(Cell {
+            car: as_ptr(root_frame),
+            cdr: 0,
+        });
+
         for core_function in CORE_FUNCTIONS {
             env.functions.insert(core_function.symbol(), *core_function);
         }
@@ -120,26 +139,111 @@ impl LispEnv {
             env.encode_number("3.141592653589793"),
         );
 
+        // env.load_core_library().unwrap();
+
+        env
+    }
+
+    fn load_core_library(&mut self) -> Result<(), ()> {
         for file in Assets::iter() {
             println!("Load {}", file.as_ref());
             let raw = Assets::get(file.as_ref()).unwrap().data;
             let contents = std::str::from_utf8(&raw).unwrap();
             println!("Contents of {}: {}", file.as_ref(), contents);
 
-            let program = env.parse(contents).unwrap();
-            let result = env.evaluate(program).unwrap();
+            let program = self.parse(contents).unwrap();
+            let result = self.evaluate(program).unwrap();
             println!("Result is {}", Cell::format_component(result));
         }
 
-        env
+        Ok(())
+    }
+
+    /// Allocates a new execution frame, adds it to frames stack, and returns the new pointer
+    /// to this new frame map and to the previous frame cell (for deallocation purposes).
+    ///
+    /// A stack frame has the following structure:
+    ///
+    /// ```
+    /// [frame_map_ptr | 0]
+    ///     -> [map_name_ptr | 0]
+    ///             -> [prop_list_ptr | "_frame_"]
+    /// ```
+    ///
+    /// or initially, before the symbols are copied over to the frame:
+    ///
+    /// ```
+    /// [frame_map_ptr | 0]
+    ///     -> ["_frame_" | 0]
+    /// ```
+    pub fn allocate_frame(&self) -> (u64, usize) {
+        let frame_map_ptr = self.allocate_symbol(Some("_frame_"), 0);
+        let new_frame = self.insert_cell(Cell {
+            car: frame_map_ptr,
+            cdr: 0,
+        });
+        let new_slot = self.insert_cell(Cell {
+            car: as_ptr(new_frame),
+            cdr: 0,
+        });
+
+        {
+            // Remember that `last` will return the last VALUE of the iterator, not the last SLOT
+            // pointer!
+            let last_frame_ptr = self.memory.borrow()[self.stack_frames]
+                .iter(self)
+                .last()
+                .unwrap();
+            println!("--- fetching last stack ptr");
+            self.print_memory();
+            let frame_symbol_map_ptr = self.memory.borrow()[ptr(last_frame_ptr)].car;
+            let symbol_map_properties_ptr = self.symbol_properties(frame_symbol_map_ptr);
+            // self.memory.borrow()[ptr(last_stack_symbol_map_ptr)].car;
+            // self.print_memory();
+            // println!(
+            //     "Last stack: {:?}, {:?}",
+            //     Cell::format_component(last_stack_ptr),
+            //     Cell::format_component(last_stack_symbol_map_ptr)
+            // );
+
+            let property_pointers = self.memory.borrow()[dbg!(ptr(symbol_map_properties_ptr))]
+                .iter(self)
+                .collect::<Vec<u64>>();
+            for property_ptr in dbg!(property_pointers) {
+                let (prop_name, prop_val) = {
+                    let prop_cell = &self.memory.borrow()[ptr(property_ptr)];
+                    (prop_cell.cdr, prop_cell.car)
+                };
+                // FIXME Super simple copy, actually requires deep copies.
+                self.print_memory();
+                self.append_property(dbg!(frame_map_ptr), prop_name, prop_val);
+            }
+        }
+
+        let last_frame_idx = self.get_last_cell_idx(as_ptr(self.stack_frames));
+        self.memory.borrow_mut()[last_frame_idx].set_cdr_pointer(new_slot);
+
+        (frame_map_ptr, last_frame_idx)
+    }
+
+    /// Appends the property to the last entry of the frame stack
+    pub fn append_property_to_stack(&self, prop_name_ptr: u64, prop_val: u64) -> u64 {
+        let stack_tail_car = {
+            let stack_head_cell = &self.memory.borrow()[self.stack_frames];
+            let last_frame_ptr = stack_head_cell.iter(self).last().unwrap();
+            println!("Will append to stack idx {}", ptr(last_frame_ptr));
+            self.memory.borrow()[ptr(last_frame_ptr)].car
+            // remember that this returns the last VALUE, mot the last list SLOT!
+        };
+
+        self.append_property(stack_tail_car, prop_name_ptr, prop_val)
     }
 
     /// Returns an encoded pointer to the property __slot__, i.e. the cell which points at the
     /// effective property entry. Since that cell and its immediate child are effectively structured
     /// as a symbol, it is therefore quite trivial to generate nested symbol structures.
     pub fn append_property(&self, symbol_ptr: u64, prop_name_ptr: u64, prop_val: u64) -> u64 {
-        let symbol_ptr = ptr(symbol_ptr);
-        if !self.memory.borrow().contains(symbol_ptr) {
+        if !self.memory.borrow().contains(ptr(symbol_ptr)) {
             panic!("Inconsistent pointer {}", symbol_ptr);
         }
 
@@ -152,6 +256,14 @@ impl LispEnv {
 
         // TODO For now we'll assume that there won't be any duplicate keys
 
+        let property_name = Cell::decode_symbol_name(prop_name_ptr);
+        if let Some(property_slot_ptr) = self.get_property(symbol_ptr, &dbg!(property_name)) {
+            self.print_memory();
+            self.memory.borrow_mut()[ptr(property_slot_ptr)].car = prop_val;
+
+            return property_slot_ptr;
+        }
+
         let prop_slot_idx = self.allocate_empty_cell();
         let prop_cell_idx = self.allocate_empty_cell();
         {
@@ -162,47 +274,20 @@ impl LispEnv {
         }
 
         {
-            let root_cell_car = self.memory.borrow()[symbol_ptr].car;
-            if is_pointer(root_cell_car) {
-                let name_cell_car = self.memory.borrow()[ptr(root_cell_car)].car;
-                println!(
-                    "Target symbol name is {}",
-                    Cell::decode_symbol_name(self.memory.borrow()[ptr(root_cell_car)].cdr)
-                );
-                let mut current_property_slot_ptr = name_cell_car;
-                loop {
-                    // println!(
-                    //     "Current property slot ptr: {:#b}",
-                    //     current_property_slot_ptr
-                    // );
-                    let next_prop_ptr = self.memory.borrow()[ptr(current_property_slot_ptr)].cdr;
-                    if next_prop_ptr == 0 {
-                        self.memory.borrow_mut()[ptr(current_property_slot_ptr)]
-                            .set_cdr_pointer(prop_slot_idx);
-                        break;
-                    }
-                    // let prop_name = &mut self.memory.borrow_mut()[ptr(next_prop_ptr)];
-                    //
-                    // if prop_name.cdr == 0 {
-                    //     prop_name.set_cdr_pointer(prop_slot_idx);
-                    //     break;
-                    // }
-                    current_property_slot_ptr = next_prop_ptr;
-                }
+            let properties_head_ptr = self.symbol_properties(symbol_ptr);
+            if dbg!(properties_head_ptr) != 0 {
+                let last_prop_cell_idx = self.get_last_cell_idx(properties_head_ptr);
+                self.memory.borrow_mut()[last_prop_cell_idx].set_cdr_pointer(prop_slot_idx);
             } else {
                 // in that case root_cell_car contains the symbol name
                 // Then we need to rearrange the cell to describe a non-unitary symbol
-                let name_cell_idx = self.allocate_empty_cell();
-                self.memory.borrow_mut()[symbol_ptr].set_car_pointer(name_cell_idx);
-                // println!(
-                //     "New root cell car: {:#b}",
-                //     self.memory.borrow()[symbol_ptr].car
-                // );
-                {
-                    let mut name_cell = &mut self.memory.borrow_mut()[name_cell_idx];
-                    name_cell.set_car_pointer(prop_slot_idx);
-                    name_cell.cdr = root_cell_car;
-                }
+                let symbol_idx = ptr(symbol_ptr);
+                let root_cell_name = self.memory.borrow()[symbol_idx].car;
+                let name_cell_idx = self.insert_cell(Cell {
+                    car: as_ptr(prop_slot_idx),
+                    cdr: root_cell_name,
+                });
+                self.memory.borrow_mut()[symbol_idx].car = as_ptr(name_cell_idx);
             }
         };
 
@@ -238,27 +323,23 @@ impl LispEnv {
 
     /// Returns an optional pointer to the property **slot**
     pub fn get_property(&self, symbol_ptr: u64, key: &str) -> Option<u64> {
-        let root_cell = &self.memory.borrow()[dbg!(ptr(symbol_ptr))];
-        if !is_pointer(root_cell.car) {
+        if symbol_ptr == 0 {
+            return None;
+        }
+
+        let property_head_ptr = self.symbol_properties(dbg!(symbol_ptr));
+        if dbg!(property_head_ptr) == 0 {
             return None;
         }
 
         let encoded_name = Cell::encode_symbol_name(key).0;
 
-        let name_cell = &self.memory.borrow()[ptr(root_cell.car)];
-        let mut next_entry_ptr = name_cell.car;
-        while next_entry_ptr != 0 {
-            let slot_cell = &self.memory.borrow()[ptr(next_entry_ptr)];
-            let prop_cell = &self.memory.borrow()[ptr(slot_cell.car)];
-
-            if encoded_name == prop_cell.cdr {
-                return Some(slot_cell.car);
-            }
-
-            next_entry_ptr = slot_cell.cdr;
-        }
-
-        None
+        let prop_list_head = &self.memory.borrow()[dbg!(ptr(property_head_ptr))];
+        self.print_memory();
+        prop_list_head.iter(self).find(|property_ptr| {
+            let prop_cell = &self.memory.borrow()[ptr(*property_ptr)];
+            encoded_name == prop_cell.cdr
+        })
     }
 
     /// Returns an optional pointer to the property value cell
@@ -268,24 +349,46 @@ impl LispEnv {
     }
 
     pub fn property_count(&self, symbol_ptr: u64) -> usize {
+        let property_list_head = self.symbol_properties(symbol_ptr);
+        if property_list_head == 0 {
+            return 0;
+        }
+        self.get_list_length(property_list_head)
+    }
+
+    /// Returns a pointer to the head of the symbol's property list, if any.
+    /// A typical symbol structure will be as follows:
+    ///
+    /// ```
+    /// [symb_name_ptr | nil]
+    ///    -> [symb_list_ptr | "symb"]
+    ///          -> [1st_symb_ptr | nil]
+    ///                -> [10 | "foo"]
+    ///```
+    pub fn symbol_properties(&self, symbol_ptr: u64) -> u64 {
         let root_cell = &self.memory.borrow()[dbg!(ptr(symbol_ptr))];
-        if !is_pointer(root_cell.car) {
+        if root_cell.car == 0 || !is_pointer(dbg!(root_cell).car) {
             return 0;
         }
 
         let name_cell = &self.memory.borrow()[ptr(root_cell.car)];
-        let mut next_entry_ptr = name_cell.car;
-        let mut count = 0;
-        while next_entry_ptr != 0 {
-            let prop_val = &self.memory.borrow()[ptr(next_entry_ptr)];
-            let prop_name = &self.memory.borrow()[ptr(prop_val.cdr)];
+        dbg!(name_cell).car
+    }
 
-            count += 1;
-
-            next_entry_ptr = prop_name.cdr;
+    pub fn get_last_cell_idx(&self, list_ptr: u64) -> usize {
+        if !is_pointer(list_ptr) {
+            return 0;
         }
 
-        count
+        let mut previous_cell_idx = ptr(list_ptr);
+        let mut cell_cdr = self.memory.borrow()[previous_cell_idx].cdr;
+
+        while cell_cdr != 0 {
+            previous_cell_idx = ptr(cell_cdr);
+            cell_cdr = self.memory.borrow()[previous_cell_idx].cdr;
+        }
+
+        return previous_cell_idx;
     }
 
     pub fn get_list_length(&self, list_ptr: u64) -> usize {
@@ -358,6 +461,7 @@ mod tests {
     #[test]
     fn global_scope_is_allocated() {
         let env = LispEnv::new();
+        env.print_memory();
         assert_ne!(0, env.internal_symbols_key);
 
         let scope_root = &env.memory.borrow()[ptr(env.internal_symbols_key)];
@@ -575,10 +679,88 @@ mod tests {
     }
 
     #[test]
+    fn get_list_length() {
+        let mut env = LispEnv::new();
+        let list_head = env.parse("(1 2)").unwrap();
+        let first_statement = env.memory.borrow()[list_head].car;
+        assert_eq!(2, env.get_list_length(first_statement));
+    }
+
+    #[test]
+    fn get_last_list_idx_single_cell() {
+        let mut env = LispEnv::new();
+        let list_head = env.parse("(1)").unwrap();
+        let first_statement = env.memory.borrow()[list_head].car;
+        let last_idx = env.get_last_cell_idx(first_statement);
+        assert_eq!(1, as_number(env.memory.borrow_mut()[last_idx].car));
+    }
+
+    #[test]
+    fn get_last_list_idx_many_items() {
+        let mut env = LispEnv::new();
+        let list_head = env.parse("(1 2 3)").unwrap();
+        let first_statement = env.memory.borrow()[list_head].car;
+        let last_idx = env.get_last_cell_idx(first_statement);
+        assert_eq!(3, as_number(env.memory.borrow_mut()[last_idx].car));
+    }
+
+    #[test]
     fn cadr_from_stdlib() {
         let mut env = LispEnv::new();
         let program = env.parse("(cadr (1 2 3))").unwrap();
         let result = env.evaluate(program).unwrap();
         assert_eq!(2, as_number(result));
+    }
+
+    #[test]
+    fn root_stack_points_frame_points_to_global_scope() {
+        let env = LispEnv::new();
+        let root_stack_cell = &env.memory.borrow()[env.stack_frames];
+        assert_eq!(0, root_stack_cell.cdr);
+        assert_ne!(env.internal_symbols_key, root_stack_cell.car);
+        assert!(is_pointer(root_stack_cell.car));
+
+        let frame_cell = &env.memory.borrow()[ptr(root_stack_cell.car)];
+        assert_eq!(frame_cell.car, env.internal_symbols_key);
+    }
+
+    #[test]
+    fn new_frame_returns_with_current_and_previous_pointers() {
+        let env = LispEnv::new();
+        let (frame_map_ptr, previous_frame_idx) = env.allocate_frame();
+        assert!(is_symbol_ptr(frame_map_ptr));
+        assert_eq!(env.stack_frames, previous_frame_idx);
+
+        let head_stack_cdr = env.memory.borrow()[env.stack_frames].cdr;
+        let stack_slot_cell = &env.memory.borrow()[ptr(head_stack_cdr)];
+        assert_eq!(0, stack_slot_cell.cdr);
+
+        let frame_cell = &env.memory.borrow()[ptr(stack_slot_cell.car)];
+        assert_eq!(frame_cell.car, frame_map_ptr);
+    }
+
+    #[test]
+    fn new_frame_copies_symbols_from_previous_frame() {
+        let env = LispEnv::new();
+        let (frame_map_ptr, _previous_frame_idx) = env.allocate_frame();
+        let root_symbol_map_size = env.property_count(env.internal_symbols_key);
+        assert_ne!(0, root_symbol_map_size);
+        assert_eq!(env.property_count(frame_map_ptr), root_symbol_map_size);
+
+        let root_prop_names_ptr = env.symbol_properties(env.internal_symbols_key);
+        let list_head_cell = &env.memory.borrow()[ptr(root_prop_names_ptr)];
+        let root_prop_names = list_head_cell
+            .iter(&env)
+            .map(|prop_ptr| env.memory.borrow()[ptr(prop_ptr)].cdr)
+            .map(|name| Cell::decode_symbol_name(name))
+            .collect::<Vec<String>>();
+
+        let frame_prop_cell = &env.memory.borrow()[ptr(env.symbol_properties(frame_map_ptr))];
+        let frame_prop_names = frame_prop_cell
+            .iter(&env)
+            .map(|prop_ptr| env.memory.borrow()[ptr(prop_ptr)].cdr)
+            .map(|name| Cell::decode_symbol_name(name))
+            .collect::<Vec<String>>();
+        assert_eq!(root_prop_names, frame_prop_names);
     }
 }

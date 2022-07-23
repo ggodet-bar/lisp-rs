@@ -12,14 +12,12 @@ impl LispFunction for Mult {
 
     fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
         let result = {
-            let memory = env.memory.borrow();
-
-            let args = &memory[args_idx];
+            let args = env.memory.borrow()[args_idx].clone();
             let mut result = as_number(env.evaluate_atom(args.car).unwrap());
             let mut current_cell = args;
             while current_cell.cdr != 0 {
                 println!("* current cell: {:?}", current_cell);
-                let next_cell = &memory[current_cell.cdr_ptr()];
+                let next_cell = env.memory.borrow()[current_cell.cdr_ptr()].clone();
                 println!("Next cell: {:?}", next_cell);
 
                 let next_value = env.evaluate_atom(next_cell.car).unwrap();
@@ -30,7 +28,7 @@ impl LispFunction for Mult {
                 result *= as_number(next_value);
                 println!("current result: {}", result);
 
-                current_cell = &next_cell;
+                current_cell = next_cell;
             }
 
             result

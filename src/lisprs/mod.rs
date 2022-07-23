@@ -1,6 +1,7 @@
 mod cell;
 mod core;
 pub mod evaluator;
+mod iter;
 mod lisp_env;
 pub mod parser;
 mod util;

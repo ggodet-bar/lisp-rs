@@ -18,7 +18,8 @@ impl LispEnv {
             Rule::number => self.encode_number(atom.as_str()),
             Rule::symbol => {
                 let symbol_name = atom.as_str();
-                // println!("Allocating symbol {}", symbol_name);
+                println!("Allocating symbol {}", symbol_name);
+                // if self.get_property(self.internal_symbols_key)
                 self.allocate_symbol(Some(symbol_name), self.nil_key)
             }
             Rule::sexpr => self.parse_list(atom.into_inner())?,
@@ -331,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn reuse_symbols_within_global_scope() {
+    fn do_not_symbols_within_global_scope_while_parsing() {
         let mut env = LispEnv::new();
         let result = env.parse("(a a a)");
         assert!(result.is_ok());
@@ -360,8 +361,11 @@ mod tests {
             env.memory.borrow()[ptr(third_entry.car)].car
         );
 
-        assert_eq!(first_statement.car, second_entry.car);
-        assert_eq!(first_statement.car, third_entry.car);
+        assert_ne!(first_statement.car, second_entry.car);
+        assert_ne!(first_statement.car, third_entry.car);
+
+        // We should actually only rationalize this when evaluating the list, otherwise we'll end up
+        // having to resolve frame allocations during the parsing phase...
     }
 
     //     #[test]
@@ -455,14 +459,6 @@ mod tests {
     //         assert_eq!("a", Cell::decode_symbol_name(third_cell.car));
     //         assert_eq!(0, third_cell.cdr);
     //     }
-
-    #[test]
-    fn get_list_length() {
-        let mut env = LispEnv::new();
-        let list_head = env.parse("(1 2)").unwrap();
-        let first_statement = &env.memory.borrow()[list_head];
-        assert_eq!(2, env.get_list_length(first_statement.car));
-    }
 
     #[test]
     fn parse_small_program() {

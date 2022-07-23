@@ -46,7 +46,7 @@ impl LispFunction for Put {
         };
         let property_ptr = env
             .get_property_value(env.internal_symbols_key, &symbol_name)
-            .unwrap_or_else(|| env.append_property(env.internal_symbols_key, symbol_cell_car, 0));
+            .unwrap_or_else(|| env.append_property_to_stack(symbol_cell_car, 0));
         println!(
             "Will append to property at {}",
             Cell::format_component(property_ptr)

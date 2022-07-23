@@ -71,15 +71,21 @@ mod tests {
     fn evaluate_list() {
         let mut env = LispEnv::new();
         let program = env.parse("(def X (1 2 3 4))\n(cdr X)").unwrap();
-
+        println!("------");
         let result = env.evaluate(program);
         assert!(result.is_ok());
 
         env.print_memory();
-        let result = result.unwrap();
+        // FIXME The way the property is stored in the _lisprs struct conflicts with the weird
+        //       symbol-like data struct we end up using because we lazy...
+        let result = dbg!(result).unwrap();
+        assert_ne!(0, result);
         assert!(is_pointer(result));
 
-        let first_item = env.memory.borrow()[ptr(result)].car;
-        assert_eq!(2, as_number(first_item));
+        let list_values = env.memory.borrow()[ptr(result)]
+            .iter(&env)
+            .map(|val| as_number(val))
+            .collect::<Vec<i64>>();
+        assert_eq!([2, 3, 4].to_vec(), list_values);
     }
 }
