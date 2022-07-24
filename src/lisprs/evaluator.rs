@@ -1,5 +1,5 @@
 use crate::lisprs::cell::Cell;
-use crate::lisprs::lisp_env::MAX_CYCLES;
+use crate::lisprs::lisp_env::{GC_PERIOD, MAX_CYCLES};
 use crate::lisprs::symbol::Symbol;
 use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
@@ -46,6 +46,10 @@ impl LispEnv {
         *self.cycle_count.borrow_mut() += 1;
         if MAX_CYCLES != 0 && *self.cycle_count.borrow() > MAX_CYCLES {
             panic!("Forced exit");
+        }
+
+        if *self.cycle_count.borrow() % GC_PERIOD == 0 {
+            self.run_garbage_collector();
         }
 
         trace!("Evaluating statement {}", Cell::format_component(statement));
@@ -170,6 +174,7 @@ impl LispEnv {
 #[cfg(test)]
 mod tests {
     use crate::lisprs::cell::Cell;
+    use crate::lisprs::list::List;
     use crate::lisprs::symbol::Symbol;
     use crate::lisprs::util::{
         as_number, is_number, is_pointer, is_symbol_ptr, number_pointer, ptr,
@@ -203,8 +208,7 @@ mod tests {
 
         env.print_memory();
         let result = result.unwrap();
-        let list_cell = &env.memory.borrow()[ptr(result)];
-        let symbol_ptrs = list_cell.iter(&env).collect::<Vec<u64>>();
+        let symbol_ptrs = List::as_list(result, &env).iter().collect::<Vec<u64>>();
         assert_eq!(symbol_ptrs[0], symbol_ptrs[1]);
         assert_eq!(symbol_ptrs[0], symbol_ptrs[2]);
     }
@@ -548,6 +552,11 @@ mod tests {
 
         env.print_memory();
         assert_eq!(55, as_number(result));
-        trace!("Memory size: {}", env.memory_size());
+        println!("Memory size: {}", env.memory_size());
+    }
+
+    #[test]
+    fn fibonacci_benchmark() {
+        todo!("Handle frame deallocations otherwise we'll blow up the memory :(")
     }
 }

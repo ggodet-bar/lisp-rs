@@ -11,7 +11,7 @@ impl LispFunction for Put {
     }
 
     fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
-        let (symbol_name, symbol_cell_car, property_name_cell_car, property_value) = {
+        let (_symbol_name, symbol_cell_car, property_name_cell_car, property_value) = {
             let memory = env.memory.borrow();
             let args = &memory[args_idx];
             println!("arg cell: {:?}", args);

@@ -20,6 +20,7 @@ impl LispFunction for Cdr {
 
 #[cfg(test)]
 mod tests {
+    use crate::lisprs::list::List;
     use crate::lisprs::util::{as_number, is_pointer, is_true, ptr};
     use crate::lisprs::LispEnv;
 
@@ -82,8 +83,8 @@ mod tests {
         assert_ne!(0, result);
         assert!(is_pointer(result));
 
-        let list_values = env.memory.borrow()[ptr(result)]
-            .iter(&env)
+        let list_values = List::as_list(result, &env)
+            .iter()
             .map(|val| as_number(val))
             .collect::<Vec<i64>>();
         assert_eq!([2, 3, 4].to_vec(), list_values);

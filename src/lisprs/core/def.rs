@@ -1,6 +1,7 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::lisp_env::LispFunction;
-use crate::lisprs::util::{is_pointer, ptr};
+use crate::lisprs::list::List;
+use crate::lisprs::util::{as_ptr, is_pointer, ptr};
 use crate::lisprs::LispEnv;
 
 pub struct Def;
@@ -11,8 +12,8 @@ impl LispFunction for Def {
     }
 
     fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
-        let arg_values = env.memory.borrow()[args_idx]
-            .iter(&env)
+        let arg_values = List::as_list(as_ptr(args_idx), &env)
+            .iter()
             .collect::<Vec<u64>>();
         let value_head = match arg_values.len() {
             2 => {

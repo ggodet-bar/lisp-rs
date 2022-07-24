@@ -19,6 +19,7 @@ use log::*;
 ///     -> ["_frame_" | 0]
 /// ```
 pub struct Frame<'a> {
+    frame_ptr: u64,
     pub(crate) symbol_map_ptr: u64,
     previous_frame_idx: usize,
     env: &'a LispEnv,
@@ -70,6 +71,7 @@ impl<'a> Frame<'a> {
         env.memory.borrow_mut()[last_frame_idx].set_cdr_pointer(new_slot);
 
         Self {
+            frame_ptr: as_ptr(new_frame),
             symbol_map_ptr: frame_map.ptr(),
             previous_frame_idx: last_frame_idx,
             env: &env,
@@ -97,8 +99,8 @@ impl<'a> Frame<'a> {
 
     pub fn deallocate(self) {
         self.env.memory.borrow_mut()[self.previous_frame_idx].cdr = 0; // frame deallocation
-
-        // FIXME flag the frame and its symbol map as reclaimable
+        self.symbol_map().deallocate();
+        self.env.memory.borrow_mut()[ptr(self.frame_ptr)].deallocate();
         trace!("Deallocated frame {}", ptr(self.symbol_map_ptr));
     }
 }
@@ -106,6 +108,7 @@ impl<'a> Frame<'a> {
 #[cfg(test)]
 mod tests {
     use crate::lisprs::cell::Cell;
+    use crate::lisprs::list::List;
     use crate::lisprs::util::{is_symbol_ptr, ptr};
     use crate::lisprs::LispEnv;
 
@@ -133,16 +136,16 @@ mod tests {
         assert_eq!(frame.symbol_map().property_count(), root_symbol_map_size);
 
         let root_prop_names_ptr = env.global_map().properties_ptr();
-        let list_head_cell = &env.memory.borrow()[ptr(root_prop_names_ptr)];
+        let list_head_cell = List::as_list(root_prop_names_ptr, &env);
         let root_prop_names = list_head_cell
-            .iter(&env)
+            .iter()
             .map(|prop_ptr| env.memory.borrow()[ptr(prop_ptr)].cdr)
             .map(|name| Cell::decode_symbol_name(name))
             .collect::<Vec<String>>();
 
-        let frame_prop_cell = &env.memory.borrow()[ptr(frame.symbol_map().properties_ptr())];
+        let frame_prop_cell = List::as_list(frame.symbol_map().properties_ptr(), &env);
         let frame_prop_names = frame_prop_cell
-            .iter(&env)
+            .iter()
             .map(|prop_ptr| env.memory.borrow()[ptr(prop_ptr)].cdr)
             .map(|name| Cell::decode_symbol_name(name))
             .collect::<Vec<String>>();

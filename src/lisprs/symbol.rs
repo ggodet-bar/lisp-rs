@@ -1,4 +1,5 @@
 use crate::lisprs::cell::Cell;
+use crate::lisprs::list::List;
 use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
 use log::*;
@@ -28,11 +29,38 @@ impl<'a> Symbol<'a> {
                 cdr: value_ptr,
             }
         });
-        // trace!("Symbol allocated at idx {}", cell_key);
 
         Self {
             ptr: (cell_key as u64) << 4 | 0b1000,
             env,
+        }
+    }
+
+    pub fn deallocate(self) {
+        let root_cell_car = {
+            let root_cell = &mut self.env.memory.borrow_mut()[self.idx()];
+            root_cell.deallocate();
+            root_cell.car
+        };
+
+        if is_pointer(root_cell_car) {
+            let name_car = {
+                let name_cell = &mut self.env.memory.borrow_mut()[ptr(root_cell_car)];
+                name_cell.deallocate();
+                name_cell.car
+            };
+
+            let symbol_list_ptr = name_car;
+            let symbol_list = List::as_list(symbol_list_ptr, self.env);
+            let list_values = symbol_list.iter_slots().collect::<Vec<(u64, u64)>>();
+            for (list_val, list_slot) in list_values {
+                if is_pointer(list_val) {
+                    self.env.memory.borrow_mut()[ptr(list_val)].deallocate();
+                    if list_slot != 0 {
+                        self.env.memory.borrow_mut()[ptr(list_slot)].deallocate();
+                    }
+                }
+            }
         }
     }
 

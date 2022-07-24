@@ -1,3 +1,4 @@
+use crate::lisprs::Cell;
 use clap::{ArgGroup, Parser};
 use filesystem::{FileSystem, OsFileSystem};
 use std::path::PathBuf;
@@ -35,7 +36,10 @@ fn main() -> Result<(), Error> {
 
     let mut env = lisprs::LispEnv::new();
 
-    env.parse(&expr_str)?;
+    let program = env.parse(&expr_str)?;
+    let result = env.evaluate(program).unwrap();
+
+    println!("{}", Cell::format_component(result));
 
     Ok(())
 }

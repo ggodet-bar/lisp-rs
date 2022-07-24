@@ -4,9 +4,9 @@ use crate::lisprs::LispEnv;
 use std::iter::Iterator;
 
 pub struct CellIter<'a> {
-    next_cell_ptr: Option<u64>,
-    root_cell: &'a Cell,
-    env: &'a LispEnv,
+    pub(crate) next_cell_ptr: Option<u64>,
+    pub(crate) root_cell: Cell,
+    pub(crate) env: &'a LispEnv,
 }
 
 impl<'a> Iterator for CellIter<'a> {
@@ -28,11 +28,35 @@ impl<'a> Iterator for CellIter<'a> {
 }
 
 impl Cell {
-    pub fn iter<'a>(&'a self, lisp_env: &'a LispEnv) -> CellIter<'a> {
+    pub fn iter<'a>(&self, lisp_env: &'a LispEnv) -> CellIter<'a> {
         CellIter {
             next_cell_ptr: None,
-            root_cell: &self,
+            root_cell: self.clone(),
             env: lisp_env,
+        }
+    }
+}
+
+pub struct CellSlotIter<'a> {
+    pub(crate) next_cell_ptr: Option<u64>,
+    pub(crate) root_cell: Cell,
+    pub(crate) env: &'a LispEnv,
+}
+
+impl<'a> Iterator for CellSlotIter<'a> {
+    type Item = (u64, u64); // second value is the cell slot ptr
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(next_cell_ptr) = self.next_cell_ptr.as_mut() {
+            if *next_cell_ptr == 0 {
+                return None;
+            }
+            let new_cell = &self.env.memory.borrow()[ptr(*next_cell_ptr)];
+            *next_cell_ptr = new_cell.cdr;
+            Some((new_cell.car, *next_cell_ptr))
+        } else {
+            self.next_cell_ptr = Some(self.root_cell.cdr);
+            Some((self.root_cell.car, self.root_cell.cdr))
         }
     }
 }

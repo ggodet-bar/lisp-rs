@@ -94,6 +94,15 @@ impl Cell {
 
         (result, &[])
     }
+
+    pub fn deallocate(&mut self) {
+        self.car |= 0b1;
+        self.cdr |= 0b1;
+    }
+
+    pub fn is_deallocated(&self) -> bool {
+        self.car & 0b1 == 0b1 && self.cdr & 0b1 == 0b1
+    }
 }
 
 #[cfg(test)]
