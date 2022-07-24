@@ -15,7 +15,7 @@ use std::str::FromStr;
 pub const MAX_CYCLES: usize = 0;
 
 /// Defines how many statements should be evaluated before triggering a garbage collection.
-pub const GC_PERIOD: usize = 100;
+pub const GC_PERIOD: usize = 300;
 
 pub trait LispFunction: Sync {
     fn symbol(&self) -> String;
@@ -216,7 +216,7 @@ impl LispEnv {
     }
 
     pub fn run_garbage_collector(&self) {
-        println!("Running GC");
+        trace!("Running GC");
 
         let memory = &mut self.memory.borrow_mut();
         memory.retain(|_key, val| !val.is_deallocated())

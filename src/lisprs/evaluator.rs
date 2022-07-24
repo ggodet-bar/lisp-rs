@@ -554,9 +554,4 @@ mod tests {
         assert_eq!(55, as_number(result));
         println!("Memory size: {}", env.memory_size());
     }
-
-    #[test]
-    fn fibonacci_benchmark() {
-        todo!("Handle frame deallocations otherwise we'll blow up the memory :(")
-    }
 }
