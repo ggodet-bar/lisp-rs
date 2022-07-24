@@ -26,19 +26,18 @@ impl LispEnv {
         let first_param = self.memory.borrow()[ptr(first_param)].car;
         let first_arg = self.memory.borrow()[ptr(arg_list_ptr)].car;
         let first_arg_result = self.evaluate_atom(first_arg).unwrap();
-        let (frame_ptr, previous_frame_idx) = self.allocate_frame();
-        trace!("New frame ptr: {}", ptr(frame_ptr));
+        let frame = self.allocate_frame();
+        trace!("New frame ptr: {}", ptr(frame.symbol_map_ptr));
         trace!(
             "Assigning value {} to param {}",
             Cell::format_component(first_arg_result),
             Cell::format_component(first_param)
         );
-        self.append_property_to_stack(first_param, first_arg_result);
-        // self.append_property(frame_ptr, first_param, first_arg);
+        frame.append_property(first_param, first_arg_result);
         let result = self.evaluate_atom(prog_body)?;
         trace!("Function result is {}", Cell::format_component(result));
-        self.memory.borrow_mut()[previous_frame_idx].cdr = 0; // frame deallocation
-        trace!("Deallocated frame {}", ptr(frame_ptr));
+        frame.deallocate();
+
         Ok(result)
     }
 

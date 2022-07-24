@@ -1,5 +1,6 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::core::CORE_FUNCTIONS;
+use crate::lisprs::frame::Frame;
 use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, number_pointer, ptr};
 use crate::lisprs::Assets;
 use log::*;
@@ -158,71 +159,8 @@ impl LispEnv {
         Ok(())
     }
 
-    /// Allocates a new execution frame, adds it to frames stack, and returns the new pointer
-    /// to this new frame map and to the previous frame cell (for deallocation purposes).
-    ///
-    /// A stack frame has the following structure:
-    ///
-    /// ```
-    /// [frame_map_ptr | 0]
-    ///     -> [map_name_ptr | 0]
-    ///             -> [prop_list_ptr | "_frame_"]
-    /// ```
-    ///
-    /// or initially, before the symbols are copied over to the frame:
-    ///
-    /// ```
-    /// [frame_map_ptr | 0]
-    ///     -> ["_frame_" | 0]
-    /// ```
-    pub fn allocate_frame(&self) -> (u64, usize) {
-        let frame_map_ptr = self.allocate_symbol(Some("_frame_"), 0);
-        let new_frame = self.insert_cell(Cell {
-            car: frame_map_ptr,
-            cdr: 0,
-        });
-        let new_slot = self.insert_cell(Cell {
-            car: as_ptr(new_frame),
-            cdr: 0,
-        });
-
-        {
-            // Remember that `last` will return the last VALUE of the iterator, not the last SLOT
-            // pointer!
-            let last_frame_ptr = self.memory.borrow()[self.stack_frames]
-                .iter(self)
-                .last()
-                .unwrap();
-            trace!("--- fetching last stack ptr");
-            // self.print_memory();
-            let frame_symbol_map_ptr = self.memory.borrow()[ptr(last_frame_ptr)].car;
-            let symbol_map_properties_ptr = self.symbol_properties(frame_symbol_map_ptr);
-            // self.memory.borrow()[ptr(last_stack_symbol_map_ptr)].car;
-            // self.print_memory();
-            // trace!(
-            //     "Last stack: {:?}, {:?}",
-            //     Cell::format_component(last_stack_ptr),
-            //     Cell::format_component(last_stack_symbol_map_ptr)
-            // );
-
-            let property_pointers = self.memory.borrow()[ptr(symbol_map_properties_ptr)]
-                .iter(self)
-                .collect::<Vec<u64>>();
-            for property_ptr in property_pointers {
-                let (prop_name, prop_val) = {
-                    let prop_cell = &self.memory.borrow()[ptr(property_ptr)];
-                    (prop_cell.cdr, prop_cell.car)
-                };
-                // FIXME Super simple copy, actually requires deep copies.
-                // self.print_memory();
-                self.append_property(frame_map_ptr, prop_name, prop_val);
-            }
-        }
-
-        let last_frame_idx = self.get_last_cell_idx(as_ptr(self.stack_frames));
-        self.memory.borrow_mut()[last_frame_idx].set_cdr_pointer(new_slot);
-
-        (frame_map_ptr, last_frame_idx)
+    pub fn allocate_frame(&self) -> Frame {
+        Frame::allocate(&self)
     }
 
     /// Appends the property to the last entry of the frame stack
@@ -729,45 +667,5 @@ mod tests {
 
         let frame_cell = &env.memory.borrow()[ptr(root_stack_cell.car)];
         assert_eq!(frame_cell.car, env.internal_symbols_key);
-    }
-
-    #[test]
-    fn new_frame_returns_with_current_and_previous_pointers() {
-        let env = LispEnv::new();
-        let (frame_map_ptr, previous_frame_idx) = env.allocate_frame();
-        assert!(is_symbol_ptr(frame_map_ptr));
-        assert_eq!(env.stack_frames, previous_frame_idx);
-
-        let head_stack_cdr = env.memory.borrow()[env.stack_frames].cdr;
-        let stack_slot_cell = &env.memory.borrow()[ptr(head_stack_cdr)];
-        assert_eq!(0, stack_slot_cell.cdr);
-
-        let frame_cell = &env.memory.borrow()[ptr(stack_slot_cell.car)];
-        assert_eq!(frame_cell.car, frame_map_ptr);
-    }
-
-    #[test]
-    fn new_frame_copies_symbols_from_previous_frame() {
-        let env = LispEnv::new();
-        let (frame_map_ptr, _previous_frame_idx) = env.allocate_frame();
-        let root_symbol_map_size = env.property_count(env.internal_symbols_key);
-        assert_ne!(0, root_symbol_map_size);
-        assert_eq!(env.property_count(frame_map_ptr), root_symbol_map_size);
-
-        let root_prop_names_ptr = env.symbol_properties(env.internal_symbols_key);
-        let list_head_cell = &env.memory.borrow()[ptr(root_prop_names_ptr)];
-        let root_prop_names = list_head_cell
-            .iter(&env)
-            .map(|prop_ptr| env.memory.borrow()[ptr(prop_ptr)].cdr)
-            .map(|name| Cell::decode_symbol_name(name))
-            .collect::<Vec<String>>();
-
-        let frame_prop_cell = &env.memory.borrow()[ptr(env.symbol_properties(frame_map_ptr))];
-        let frame_prop_names = frame_prop_cell
-            .iter(&env)
-            .map(|prop_ptr| env.memory.borrow()[ptr(prop_ptr)].cdr)
-            .map(|name| Cell::decode_symbol_name(name))
-            .collect::<Vec<String>>();
-        assert_eq!(root_prop_names, frame_prop_names);
     }
 }
