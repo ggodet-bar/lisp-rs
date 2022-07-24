@@ -1,5 +1,6 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::lisp_env::MAX_CYCLES;
+use crate::lisprs::symbol::Symbol;
 use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
 use log::*;
@@ -58,10 +59,11 @@ impl LispEnv {
             let symbol_cell_car = self.memory.borrow()[ptr(statement)].car;
             let last_stack_idx = self.get_last_cell_idx(as_ptr(self.stack_frames));
             let last_frame_ptr = self.memory.borrow()[last_stack_idx].car;
-            let stack_symbols = self.memory.borrow()[ptr(last_frame_ptr)].car;
+            let stack_symbols =
+                Symbol::as_symbol(self.memory.borrow()[ptr(last_frame_ptr)].car, self);
             let symbol_name = Cell::decode_symbol_name(symbol_cell_car);
             trace!("Resolving value of symbol {}", symbol_name);
-            if let Some(value) = self.get_property_value(stack_symbols, &symbol_name) {
+            if let Some(value) = stack_symbols.get_property_value_by_ptr(symbol_cell_car) {
                 trace!(
                     "Found value for {}: {}",
                     symbol_name,
@@ -109,7 +111,8 @@ impl LispEnv {
                 let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
                 let current_frame_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
                 let current_frame = self.memory.borrow()[current_frame_slot].car;
-                let frame_symbols_ptr = self.memory.borrow()[ptr(current_frame)].car;
+                let frame_symbols =
+                    Symbol::as_symbol(self.memory.borrow()[ptr(current_frame)].car, self);
                 trace!("Resolving symbol {}", symbol_name);
                 if let Some(function) = self.functions.get(&symbol_name) {
                     trace!(
@@ -120,7 +123,7 @@ impl LispEnv {
                     let result = function.function(ptr(list_head.cdr), self);
                     Ok(result)
                 } else if let Some(value_or_func) =
-                    self.get_property_value(frame_symbols_ptr, &symbol_name)
+                    frame_symbols.get_property_value_by_ptr(symbol_name_ptr)
                 {
                     if is_pointer(value_or_func) {
                         // TODO For now we won't bother that `value_or_func` should probably be a
@@ -167,6 +170,7 @@ impl LispEnv {
 #[cfg(test)]
 mod tests {
     use crate::lisprs::cell::Cell;
+    use crate::lisprs::symbol::Symbol;
     use crate::lisprs::util::{
         as_number, is_number, is_pointer, is_symbol_ptr, number_pointer, ptr,
     };
@@ -276,7 +280,10 @@ mod tests {
 
         let result = result.unwrap();
         // Stored as a dot list, with car -> args list and cdr -> body
-        if let Some(foo_def) = env.get_property_value(env.internal_symbols_key, "foo") {
+        if let Some(foo_def) = env
+            .global_map()
+            .get_property_value_by_ptr(Cell::encode_symbol_name("foo").0)
+        {
             assert_eq!(result, foo_def);
             let foo_def_cell = &env.memory.borrow()[ptr(foo_def)];
             assert!(is_pointer(foo_def_cell.car));
@@ -348,9 +355,10 @@ mod tests {
         env.print_memory();
         assert!(env.global_scope_contains_property("X"));
 
-        let x_prop = env.get_property(env.internal_symbols_key, "X").unwrap();
+        let x_prop = env.global_map().get_property_by_name("X").unwrap();
         assert_ne!(0, x_prop);
-        assert!(env.get_property_value(dbg!(x_prop), "a").is_some());
+        let x_symbol = Symbol::as_symbol(x_prop, &env);
+        assert!(x_symbol.get_property_value_by_name("a").is_some());
     }
 
     #[test]

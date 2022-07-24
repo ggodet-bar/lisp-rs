@@ -1,4 +1,5 @@
 use crate::lisprs::cell::Cell;
+use crate::lisprs::symbol::Symbol;
 use crate::lisprs::util::{as_ptr, ptr};
 use crate::lisprs::LispEnv;
 use log::*;
@@ -27,9 +28,9 @@ impl<'a> Frame<'a> {
     /// Allocates a new execution frame, adds it to frames stack, and returns the new pointer
     /// to this new frame map and to the previous frame cell (for deallocation purposes).
     pub fn allocate(env: &'a LispEnv) -> Self {
-        let frame_map_ptr = env.allocate_symbol(Some("_frame_"), 0);
+        let frame_map = Symbol::allocate(Some("_frame_"), 0, &env);
         let new_frame = env.insert_cell(Cell {
-            car: frame_map_ptr,
+            car: frame_map.ptr(),
             cdr: 0,
         });
         let new_slot = env.insert_cell(Cell {
@@ -46,8 +47,10 @@ impl<'a> Frame<'a> {
                 .unwrap();
             trace!("--- fetching last stack ptr");
             // self.print_memory();
-            let frame_symbol_map_ptr = env.memory.borrow()[ptr(last_frame_ptr)].car;
-            let symbol_map_properties_ptr = env.symbol_properties(frame_symbol_map_ptr);
+
+            let frame_symbol_map =
+                Symbol::as_symbol(env.memory.borrow()[ptr(last_frame_ptr)].car, env);
+            let symbol_map_properties_ptr = frame_symbol_map.properties_ptr();
 
             let property_pointers = env.memory.borrow()[ptr(symbol_map_properties_ptr)]
                 .iter(env)
@@ -59,7 +62,7 @@ impl<'a> Frame<'a> {
                 };
                 // FIXME Super simple copy, actually requires deep copies.
                 // self.print_memory();
-                env.append_property(frame_map_ptr, prop_name, prop_val);
+                frame_map.append_property(prop_name, prop_val);
             }
         }
 
@@ -67,20 +70,29 @@ impl<'a> Frame<'a> {
         env.memory.borrow_mut()[last_frame_idx].set_cdr_pointer(new_slot);
 
         Self {
-            symbol_map_ptr: frame_map_ptr,
+            symbol_map_ptr: frame_map.ptr(),
             previous_frame_idx: last_frame_idx,
             env: &env,
         }
     }
 
-    pub fn symbol_map_ptr(&self) -> u64 {
-        self.symbol_map_ptr
+    // pub fn as_frame(frame_ptr: u64, env: &'a LispEnv) -> Self {
+    //     let frame_cell = &env.memory.borrow()[ptr(frame_ptr)];
+    //     Frame {
+    //         symbol_map_ptr: frame_cell.car,
+    //         previous_frame_idx: xxx,
+    //         env,
+    //     }
+    // }
+
+    pub fn symbol_map(&self) -> Symbol<'a> {
+        Symbol::as_symbol(self.symbol_map_ptr, self.env)
     }
 
     /// Appends the property to the last entry of the frame stack
     pub fn append_property(&self, prop_name_ptr: u64, prop_val: u64) -> u64 {
-        self.env
-            .append_property(self.symbol_map_ptr, prop_name_ptr, prop_val)
+        let frame_map = Symbol::as_symbol(self.symbol_map_ptr, self.env);
+        frame_map.append_property(prop_name_ptr, prop_val)
     }
 
     pub fn deallocate(self) {
@@ -116,14 +128,11 @@ mod tests {
     fn new_frame_copies_symbols_from_previous_frame() {
         let env = LispEnv::new();
         let frame = env.allocate_frame();
-        let root_symbol_map_size = env.property_count(env.internal_symbols_key);
+        let root_symbol_map_size = env.global_map().property_count();
         assert_ne!(0, root_symbol_map_size);
-        assert_eq!(
-            env.property_count(frame.symbol_map_ptr),
-            root_symbol_map_size
-        );
+        assert_eq!(frame.symbol_map().property_count(), root_symbol_map_size);
 
-        let root_prop_names_ptr = env.symbol_properties(env.internal_symbols_key);
+        let root_prop_names_ptr = env.global_map().properties_ptr();
         let list_head_cell = &env.memory.borrow()[ptr(root_prop_names_ptr)];
         let root_prop_names = list_head_cell
             .iter(&env)
@@ -131,8 +140,7 @@ mod tests {
             .map(|name| Cell::decode_symbol_name(name))
             .collect::<Vec<String>>();
 
-        let frame_prop_cell =
-            &env.memory.borrow()[ptr(env.symbol_properties(frame.symbol_map_ptr))];
+        let frame_prop_cell = &env.memory.borrow()[ptr(frame.symbol_map().properties_ptr())];
         let frame_prop_names = frame_prop_cell
             .iter(&env)
             .map(|prop_ptr| env.memory.borrow()[ptr(prop_ptr)].cdr)

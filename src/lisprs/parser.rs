@@ -21,7 +21,7 @@ impl LispEnv {
                 let symbol_name = atom.as_str();
                 trace!("Allocating symbol {}", symbol_name);
                 // if self.get_property(self.internal_symbols_key)
-                self.allocate_symbol(Some(symbol_name), self.nil_key)
+                self.allocate_symbol(Some(symbol_name), self.nil_key).ptr()
             }
             Rule::sexpr => self.parse_list(atom.into_inner())?,
             Rule::dotted_list => {
@@ -39,7 +39,7 @@ impl LispEnv {
                 let quote_list_ptr = self.allocate_empty_cell();
                 let quote_content_ptr = self.allocate_empty_cell();
                 {
-                    let quote_ptr = self.allocate_symbol(Some("quote"), 0);
+                    let quote_ptr = self.allocate_symbol(Some("quote"), 0).ptr();
                     let quote_list_cell = &mut self.memory.borrow_mut()[quote_list_ptr];
                     quote_list_cell.car = quote_ptr;
                     quote_list_cell.set_cdr_pointer(quote_content_ptr)

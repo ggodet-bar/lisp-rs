@@ -1,7 +1,8 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::core::CORE_FUNCTIONS;
 use crate::lisprs::frame::Frame;
-use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, number_pointer, ptr};
+use crate::lisprs::symbol::Symbol;
+use crate::lisprs::util::{as_ptr, is_pointer, number_pointer, ptr};
 use crate::lisprs::Assets;
 use log::*;
 use slab::Slab;
@@ -61,25 +62,8 @@ impl LispEnv {
     }
 
     /// Returns a symbol pointer
-    pub fn allocate_symbol(&self, name: Option<&str>, value_ptr: u64) -> u64 {
-        let cell_key = self.allocate_empty_cell();
-        {
-            let cell = &mut self.memory.borrow_mut()[cell_key];
-            if let Some(name) = name {
-                let (name_fragment, rest) = Cell::encode_symbol_name(name);
-                // trace!("Name frag: {:#b}", name_fragment);
-                if rest.is_empty() {
-                    cell.car = name_fragment;
-                } else {
-                    unimplemented!("name is big number");
-                }
-            };
-            cell.cdr = value_ptr;
-        }
-
-        // trace!("Symbol allocated at idx {}", cell_key);
-
-        (cell_key as u64) << 4 | 0b1000
+    pub fn allocate_symbol(&self, name: Option<&str>, value_ptr: u64) -> Symbol<'_> {
+        Symbol::allocate(name, value_ptr, &self)
     }
 
     pub fn allocate_empty_cell(&self) -> usize {
@@ -113,7 +97,7 @@ impl LispEnv {
             cycle_count: RefCell::new(0),
         };
         env.nil_key = env.allocate_nil() as u64;
-        env.internal_symbols_key = env.allocate_symbol(Some("_lisprs"), env.nil_key) as u64;
+        env.internal_symbols_key = env.allocate_symbol(Some("_lisprs"), env.nil_key).ptr();
         env.namespaces_idx = env.insert_cell(Cell {
             car: env.internal_symbols_key,
             cdr: 0,
@@ -130,13 +114,10 @@ impl LispEnv {
         for core_function in CORE_FUNCTIONS {
             env.functions.insert(core_function.symbol(), *core_function);
         }
-        env.append_property(
-            env.internal_symbols_key,
-            Cell::encode_symbol_name("NIL").0,
-            env.nil_key,
-        );
-        env.append_property(
-            env.internal_symbols_key,
+
+        let symbols_map = Symbol::as_symbol(env.internal_symbols_key, &env);
+        symbols_map.append_property(Cell::encode_symbol_name("NIL").0, env.nil_key);
+        symbols_map.append_property(
             Cell::encode_symbol_name("pi").0,
             env.encode_number("3.141592653589793"),
         );
@@ -173,84 +154,8 @@ impl LispEnv {
             // remember that this returns the last VALUE, mot the last list SLOT!
         };
 
-        self.append_property(stack_tail_car, prop_name_ptr, prop_val)
-    }
-
-    /// Returns an encoded pointer to the property __slot__, i.e. the cell which points at the
-    /// effective property entry. Since that cell and its immediate child are effectively structured
-    /// as a symbol, it is therefore quite trivial to generate nested symbol structures.
-    pub fn append_property(&self, symbol_ptr: u64, prop_name_ptr: u64, prop_val: u64) -> u64 {
-        if !self.memory.borrow().contains(ptr(symbol_ptr)) {
-            panic!("Inconsistent pointer {}", symbol_ptr);
-        }
-
-        // initially the symbol would be [ name | val ], and we want to have
-        // [name_ptr | val]
-        //      -> [1st_prop_slot | name ]
-        //              -> [prop_ptr | nil]
-        //                      -> [prop_val | prop_name]
-        // to add new properties, we just need to climb down the pointer list and replace the nil
-
-        // TODO For now we'll assume that there won't be any duplicate keys
-
-        let property_name = Cell::decode_symbol_name(prop_name_ptr);
-        trace!(
-            "Appending {}: {} to idx {}",
-            property_name,
-            Cell::format_component(prop_val),
-            ptr(symbol_ptr)
-        );
-        if let Some(property_slot_ptr) = self.get_property(symbol_ptr, &property_name) {
-            trace!("Replacing symbol value at {}", ptr(property_slot_ptr));
-            self.memory.borrow_mut()[ptr(property_slot_ptr)].car = prop_val;
-
-            return property_slot_ptr;
-        }
-
-        let prop_slot_idx = self.allocate_empty_cell();
-        let prop_cell_idx = self.allocate_empty_cell();
-        {
-            self.memory.borrow_mut()[prop_slot_idx].set_car_pointer(prop_cell_idx);
-            let mut prop_cell = &mut self.memory.borrow_mut()[prop_cell_idx];
-            prop_cell.car = prop_val;
-            prop_cell.cdr = prop_name_ptr;
-        }
-
-        {
-            let properties_head_ptr = self.symbol_properties(symbol_ptr);
-            if properties_head_ptr != 0 {
-                let last_prop_cell_idx = self.get_last_cell_idx(properties_head_ptr);
-                self.memory.borrow_mut()[last_prop_cell_idx].set_cdr_pointer(prop_slot_idx);
-            } else {
-                // in that case root_cell_car contains the symbol name
-                // Then we need to rearrange the cell to describe a non-unitary symbol
-                let symbol_idx = ptr(symbol_ptr);
-                let root_cell_name = self.memory.borrow()[symbol_idx].car;
-                let name_cell_idx = self.insert_cell(Cell {
-                    car: as_ptr(prop_slot_idx),
-                    cdr: root_cell_name,
-                });
-                self.memory.borrow_mut()[symbol_idx].car = as_ptr(name_cell_idx);
-            }
-        };
-
-        (prop_slot_idx as u64) << 4
-    }
-
-    pub fn symbol_name(&self, symbol_ptr: u64) -> Option<String> {
-        if !is_symbol_ptr(symbol_ptr) {
-            panic!("Not a symbol pointer!");
-        }
-
-        let root_cell = &self.memory.borrow()[ptr(symbol_ptr)];
-        if root_cell.car == 0 {
-            None
-        } else if is_number(root_cell.car) {
-            Some(Cell::decode_symbol_name(root_cell.car))
-        } else {
-            let prop_cell = &self.memory.borrow()[ptr(root_cell.car)];
-            Some(Cell::decode_symbol_name(prop_cell.cdr)) // assuming a short number name
-        }
+        let symbol_map = Symbol::as_symbol(stack_tail_car, self);
+        symbol_map.append_property(prop_name_ptr, prop_val)
     }
 
     pub(crate) fn print_memory(&self) {
@@ -266,61 +171,10 @@ impl LispEnv {
     }
 
     pub(crate) fn global_scope_contains_property(&self, name: &str) -> bool {
-        self.get_property_value(self.internal_symbols_key, name)
+        let global_symbol = Symbol::as_symbol(self.internal_symbols_key, self);
+        global_symbol
+            .get_property_value_by_ptr(Cell::encode_symbol_name(name).0)
             .is_some()
-    }
-
-    /// Returns an optional pointer to the property **slot**
-    pub fn get_property(&self, symbol_ptr: u64, key: &str) -> Option<u64> {
-        if symbol_ptr == 0 {
-            return None;
-        }
-
-        let property_head_ptr = self.symbol_properties(symbol_ptr);
-        if property_head_ptr == 0 {
-            return None;
-        }
-
-        let encoded_name = Cell::encode_symbol_name(key).0;
-
-        let prop_list_head = &self.memory.borrow()[ptr(property_head_ptr)];
-        prop_list_head.iter(self).find(|property_ptr| {
-            let prop_cell = &self.memory.borrow()[ptr(*property_ptr)];
-            encoded_name == prop_cell.cdr
-        })
-    }
-
-    /// Returns an optional pointer to the property value cell
-    pub fn get_property_value(&self, symbol_ptr: u64, key: &str) -> Option<u64> {
-        self.get_property(symbol_ptr, key)
-            .map(|slot_car| self.memory.borrow()[ptr(slot_car)].car)
-    }
-
-    pub fn property_count(&self, symbol_ptr: u64) -> usize {
-        let property_list_head = self.symbol_properties(symbol_ptr);
-        if property_list_head == 0 {
-            return 0;
-        }
-        self.get_list_length(property_list_head)
-    }
-
-    /// Returns a pointer to the head of the symbol's property list, if any.
-    /// A typical symbol structure will be as follows:
-    ///
-    /// ```
-    /// [symb_name_ptr | nil]
-    ///    -> [symb_list_ptr | "symb"]
-    ///          -> [1st_symb_ptr | nil]
-    ///                -> [10 | "foo"]
-    ///```
-    pub fn symbol_properties(&self, symbol_ptr: u64) -> u64 {
-        let root_cell = &self.memory.borrow()[ptr(symbol_ptr)];
-        if root_cell.car == 0 || !is_pointer(root_cell.car) {
-            return 0;
-        }
-
-        let name_cell = &self.memory.borrow()[ptr(root_cell.car)];
-        name_cell.car
     }
 
     pub fn get_last_cell_idx(&self, list_ptr: u64) -> usize {
@@ -352,6 +206,10 @@ impl LispEnv {
         }
 
         return len;
+    }
+
+    pub fn global_map(&self) -> Symbol {
+        Symbol::as_symbol(self.internal_symbols_key, &self)
     }
 }
 
@@ -418,17 +276,17 @@ mod tests {
         let scope_name = &env.memory.borrow()[ptr(scope_root.car)];
         assert_ne!(0, scope_name.car);
         assert_eq!(Cell::encode_symbol_name("_lisprs").0, scope_name.cdr);
-        assert!(env.property_count(env.internal_symbols_key) > 0);
+        assert!(env.global_map().property_count() > 0);
     }
 
     #[test]
     fn append_property_to_symbol() {
         let env = LispEnv::new();
-        let symbol_ptr = env.allocate_symbol(Some("symb"), 0);
+        let symbol = env.allocate_symbol(Some("symb"), 0);
 
         let original_mem_size = env.memory.borrow().len();
         let name_ptr = Cell::encode_symbol_name("foo").0;
-        let prop_slot = env.append_property(symbol_ptr, name_ptr, number_pointer(10));
+        let prop_slot = symbol.append_property(name_ptr, number_pointer(10));
         assert_eq!(original_mem_size + 3, env.memory.borrow().len());
         // 2 cells for the prop and its value, and another cell for the "_lisprs" name that's moved
         // in a separate cell
@@ -443,11 +301,11 @@ mod tests {
         //          -> [foo_cell_ptr | nil]
         //                -> [10 | "foo"]
 
-        let root_cell = &env.memory.borrow()[ptr(symbol_ptr)];
+        let root_cell = &env.memory.borrow()[symbol.idx()];
         assert_eq!(0, root_cell.cdr);
-        assert_eq!(ptr(symbol_ptr) + 3, ptr(root_cell.car));
+        assert_eq!(symbol.idx() + 3, ptr(root_cell.car));
 
-        let symbol_name_cell = &env.memory.borrow()[ptr(symbol_ptr) + 3];
+        let symbol_name_cell = &env.memory.borrow()[symbol.idx() + 3];
         assert_eq!(Cell::encode_symbol_name("symb").0, symbol_name_cell.cdr);
 
         let prop_slot_cell = &env.memory.borrow()[ptr(symbol_name_cell.car)];
@@ -457,19 +315,19 @@ mod tests {
         let prop_cell = &env.memory.borrow()[ptr(prop_ptr)];
         assert_eq!(10, as_number(prop_cell.car));
         assert_eq!(Cell::encode_symbol_name("foo").0, prop_cell.cdr);
-        assert_eq!(1, env.property_count(symbol_ptr));
+        assert_eq!(1, symbol.property_count());
     }
 
     #[test]
     fn append_another_property_to_symbol() {
         let env = LispEnv::new();
-        let symbol_ptr = env.allocate_symbol(Some("symb"), 0);
+        let symbol = env.allocate_symbol(Some("symb"), 0);
 
         let first_name_ptr = Cell::encode_symbol_name("foo").0;
-        let first_prop_slot = env.append_property(symbol_ptr, first_name_ptr, number_pointer(10));
+        let first_prop_slot = symbol.append_property(first_name_ptr, number_pointer(10));
 
         let second_name_ptr = Cell::encode_symbol_name("bar").0;
-        let second_prop_slot = env.append_property(symbol_ptr, second_name_ptr, number_pointer(42));
+        let second_prop_slot = symbol.append_property(second_name_ptr, number_pointer(42));
         assert_ne!(first_prop_slot, second_prop_slot);
 
         // expected symbol structure:
@@ -492,7 +350,7 @@ mod tests {
         assert_eq!(second_name_ptr, bar_cell.cdr);
         assert_eq!(42, as_number(bar_cell.car));
 
-        let property_root_ptr = env.memory.borrow()[ptr(symbol_ptr)].car;
+        let property_root_ptr = env.memory.borrow()[symbol.idx()].car;
         let property_root_cell = &env.memory.borrow()[ptr(property_root_ptr)];
         assert_eq!(Cell::encode_symbol_name("symb").0, property_root_cell.cdr);
 
@@ -521,13 +379,10 @@ mod tests {
     #[test]
     fn append_symbol_property_to_symbol() {
         let env = LispEnv::new();
-        let root_symbol_ptr = env.allocate_symbol(Some("symb"), 0);
-        let property_symbol_ptr = env.allocate_symbol(Some("bar"), 0);
-        let property_val_ptr = env.append_property(
-            root_symbol_ptr,
-            Cell::encode_symbol_name("bar").0,
-            property_symbol_ptr,
-        );
+        let root_symbol = env.allocate_symbol(Some("symb"), 0);
+        let property_symbol = env.allocate_symbol(Some("bar"), 0);
+        let property_val_ptr =
+            root_symbol.append_property(Cell::encode_symbol_name("bar").0, property_symbol.ptr());
 
         // expected symbol structure:
         //  symb:
@@ -546,9 +401,9 @@ mod tests {
     #[test]
     fn assign_property_to_nested_symbol() {
         let env = LispEnv::new();
-        let symbol_ptr = env.allocate_symbol(Some("symb"), 0);
+        let symbol = env.allocate_symbol(Some("symb"), 0);
         let first_name_ptr = Cell::encode_symbol_name("foo").0;
-        let first_prop_ptr = env.append_property(symbol_ptr, first_name_ptr, 0);
+        let first_prop_ptr = symbol.append_property(first_name_ptr, 0);
         trace!("Foo prop ptr is {}", ptr(first_prop_ptr));
         env.print_memory();
         // FIXME The issue is that the property 'foo' is not a symbol. What should be returned should
@@ -561,11 +416,9 @@ mod tests {
         //    -> [foo_cell_slot (1st item in list) | "symb"]
         //          -> [foo_cell_ptr | nil]
         //                    -> [nil | "foo"]
-        let nested_prop_slot = env.append_property(
-            first_prop_ptr,
-            Cell::encode_symbol_name("bar").0,
-            number_pointer(42),
-        );
+        let prop_symbol = Symbol::as_symbol(first_prop_ptr, &env);
+        let nested_prop_slot =
+            prop_symbol.append_property(Cell::encode_symbol_name("bar").0, number_pointer(42));
         trace!("Bar prop slot is {}", ptr(nested_prop_slot));
         env.print_memory();
         // expected symbol structure:
@@ -588,38 +441,23 @@ mod tests {
     }
 
     #[test]
-    fn resolve_simple_symbol_name() {
-        let env = LispEnv::new();
-        let symbol_ptr = env.allocate_symbol(Some("symb"), 0);
-        assert_eq!(Some("symb".to_string()), env.symbol_name(symbol_ptr));
-    }
-
-    #[test]
-    fn resolve_complex_symbol_name() {
-        let env = LispEnv::new();
-        let symbol_ptr = env.allocate_symbol(Some("symb"), 0);
-        let first_name_ptr = Cell::encode_symbol_name("foo").0;
-        env.append_property(symbol_ptr, first_name_ptr, number_pointer(10));
-        assert_eq!(Some("symb".to_string()), env.symbol_name(symbol_ptr));
-    }
-
-    #[test]
     fn property_is_in_global_scope() {
         let env = LispEnv::new();
         let name_ptr = Cell::encode_symbol_name("foo").0;
-        env.append_property(env.internal_symbols_key, name_ptr, number_pointer(10));
+        env.global_map()
+            .append_property(name_ptr, number_pointer(10));
         assert!(env.global_scope_contains_property("foo"));
     }
 
     #[test]
     fn get_property_value() {
         let env = LispEnv::new();
-        let symb_ptr = env.allocate_symbol(Some("foo"), 0);
+        let symb = env.allocate_symbol(Some("foo"), 0);
         let name_ptr = Cell::encode_symbol_name("bar").0;
-        env.append_property(symb_ptr, name_ptr, number_pointer(10));
+        symb.append_property(name_ptr, number_pointer(10));
         assert_eq!(
             Some(number_pointer(10)),
-            env.get_property_value(symb_ptr, "bar")
+            symb.get_property_value_by_name("bar")
         );
     }
 

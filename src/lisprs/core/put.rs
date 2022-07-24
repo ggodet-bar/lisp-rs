@@ -44,13 +44,17 @@ impl LispFunction for Put {
                 property_value,
             )
         };
-        let property_ptr = env
-            .get_property_value(env.internal_symbols_key, &symbol_name)
-            .unwrap_or_else(|| env.append_property_to_stack(symbol_cell_car, 0));
-        println!(
-            "Will append to property at {}",
-            Cell::format_component(property_ptr)
-        );
-        env.append_property(property_ptr, property_name_cell_car, property_value)
+
+        todo!("Get the stack pointer");
+        // let property_ptr = env
+        //     .internal_symbols
+        //     .get_property_value_by_ptr(symbol_cell_car)
+        //     .unwrap_or_else(|| env.append_property_to_stack(symbol_cell_car, 0));
+        // println!(
+        //     "Will append to property at {}",
+        //     Cell::format_component(property_ptr)
+        // );
+        //
+        // Symbol::as_symbol(property_ptr, env).append_property(property_name_cell_car, property_value)
     }
 }

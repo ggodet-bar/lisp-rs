@@ -5,6 +5,7 @@ mod frame;
 mod iter;
 mod lisp_env;
 pub mod parser;
+mod symbol;
 mod util;
 
 pub use lisp_env::LispEnv;

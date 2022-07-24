@@ -1,5 +1,6 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::lisp_env::LispFunction;
+use crate::lisprs::symbol::Symbol;
 use crate::lisprs::LispEnv;
 
 pub struct Symbols;
@@ -18,7 +19,8 @@ impl LispFunction for Symbols {
                 }
 
                 // let first_symbol = &env.memory.borrow()[ptr(first_symbol_slot.car)];
-                env.symbol_name(first_symbol_slot.car).unwrap()
+                let first_symbol = Symbol::as_symbol(first_symbol_slot.car, env);
+                first_symbol.name().unwrap()
             };
 
             let result_idx = env.allocate_empty_cell();
