@@ -88,10 +88,10 @@ impl<'a> Symbol<'a> {
 
         // TODO For now we'll assume that there won't be any duplicate keys
 
-        let property_name = Cell::decode_symbol_name(prop_name_ptr);
+        // let property_name = Cell::decode_symbol_name(prop_name_ptr);
         trace!(
             "Appending {}: {} to idx {}",
-            property_name,
+            prop_name_ptr,
             Cell::format_component(prop_val),
             self.ptr()
         );

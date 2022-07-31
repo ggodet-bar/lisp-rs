@@ -11,8 +11,9 @@ impl LispFunction for LtEqual {
 
     fn function(&self, arg_idx: usize, env: &LispEnv) -> u64 {
         let (first_term, second_term) = {
-            let first_arg_cell = &env.memory.borrow()[arg_idx];
-            let second_arg_cell = &env.memory.borrow()[ptr(first_arg_cell.cdr)];
+            let mem = env.memory.borrow();
+            let first_arg_cell = &mem[arg_idx];
+            let second_arg_cell = &mem[ptr(first_arg_cell.cdr)];
 
             (first_arg_cell.car, second_arg_cell.car)
         };

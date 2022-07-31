@@ -15,7 +15,7 @@ use std::str::FromStr;
 pub const MAX_CYCLES: usize = 0;
 
 /// Defines how many statements should be evaluated before triggering a garbage collection.
-pub const GC_PERIOD: usize = 300;
+pub const GC_PERIOD: usize = 5000;
 
 pub trait LispFunction: Sync {
     fn symbol(&self) -> String;
@@ -37,7 +37,8 @@ pub struct LispEnv {
     /// frame is defined a list cell whose CAR points at a local symbol map.
     pub(crate) stack_frames: usize,
 
-    pub(crate) functions: HashMap<String, &'static dyn LispFunction>,
+    /// The function name is encoded so we don't need to decode every time we get a name pointer.
+    pub(crate) functions: HashMap<u64, &'static dyn LispFunction>,
 
     /// cf MAX_CYCLES
     pub(crate) cycle_count: RefCell<usize>,
@@ -115,7 +116,10 @@ impl LispEnv {
         });
 
         for core_function in CORE_FUNCTIONS {
-            env.functions.insert(core_function.symbol(), *core_function);
+            env.functions.insert(
+                Cell::encode_symbol_name(&core_function.symbol()).0,
+                *core_function,
+            );
         }
 
         let symbols_map = Symbol::as_symbol(env.internal_symbols_key, &env);

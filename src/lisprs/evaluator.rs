@@ -42,6 +42,109 @@ impl LispEnv {
         Ok(result)
     }
 
+    fn evaluate_symbol(&self, statement: u64) -> Result<u64, Error> {
+        let symbol_cell_car = self.memory.borrow()[ptr(statement)].car;
+        let last_stack_idx = self.get_last_cell_idx(as_ptr(self.stack_frames));
+        let last_frame_ptr = self.memory.borrow()[last_stack_idx].car;
+        let stack_symbols = Symbol::as_symbol(self.memory.borrow()[ptr(last_frame_ptr)].car, self);
+        // let symbol_name = Cell::decode_symbol_name(symbol_cell_car);
+        trace!("Resolving value of symbol {}", symbol_cell_car);
+        if let Some(value) = stack_symbols.get_property_value_by_ptr(symbol_cell_car) {
+            trace!(
+                "Found value for {}: {}",
+                symbol_cell_car,
+                Cell::format_component(value)
+            );
+            // returned value will be a SLOT, not the property itself
+            self.evaluate_atom(value)
+        } else {
+            trace!("Did not find value for {}", symbol_cell_car);
+            Ok(statement)
+        }
+    }
+
+    fn evaluate_list(&self, statement: u64) -> Result<u64, Error> {
+        let list_head = self.memory.borrow()[ptr(statement)].clone();
+        if is_number(list_head.car) {
+            let mut previous_cell_idx = 0_usize;
+            let mut current_cell = list_head;
+            let mut new_head = 0_usize;
+            loop {
+                let statement_result = self.evaluate_atom(current_cell.car)?;
+                let new_cell_idx = self.insert_cell(Cell {
+                    car: statement_result,
+                    cdr: 0,
+                });
+                if new_head == 0 {
+                    new_head = new_cell_idx;
+                }
+                if previous_cell_idx != 0 {
+                    let mut previous_cell = &mut self.memory.borrow_mut()[previous_cell_idx];
+                    previous_cell.cdr = as_ptr(new_cell_idx);
+                }
+
+                if current_cell.cdr == 0 {
+                    break;
+                } else {
+                    current_cell = self.memory.borrow()[ptr(current_cell.cdr)].clone();
+                    previous_cell_idx = new_cell_idx;
+                }
+            }
+
+            Ok(as_ptr(new_head))
+        } else if is_symbol_ptr(list_head.car) {
+            let symbol_name_ptr = self.memory.borrow()[ptr(list_head.car)].car;
+            // let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
+            let current_frame_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
+            let current_frame = self.memory.borrow()[current_frame_slot].car;
+            let frame_symbols =
+                Symbol::as_symbol(self.memory.borrow()[ptr(current_frame)].car, self);
+            trace!("Resolving symbol {}", symbol_name_ptr);
+            if let Some(function) = self.functions.get(&symbol_name_ptr) {
+                trace!(
+                    "Calling function {} on memory idx {}",
+                    symbol_name_ptr,
+                    ptr(list_head.cdr)
+                );
+                let result = function.function(ptr(list_head.cdr), self);
+                Ok(result)
+            } else if let Some(value_or_func) =
+                frame_symbols.get_property_value_by_ptr(symbol_name_ptr)
+            {
+                if is_pointer(value_or_func) {
+                    // TODO For now we won't bother that `value_or_func` should probably be a
+                    //      symbol pointer, since we have [val | name]
+                    let value_cell = self.memory.borrow()[ptr(value_or_func)].clone();
+                    trace!("Target cell: {:?}", value_cell);
+                    if is_pointer(value_cell.car)
+                        && is_pointer(value_cell.cdr)
+                        && !value_cell.is_nil()
+                    {
+                        self.call_function(value_cell, list_head.cdr)
+                    } else {
+                        trace!("Found value: {}", Cell::format_component(value_or_func));
+                        self.evaluate_atom(value_cell.car)
+                    }
+                } else {
+                    trace!("Found value: {}", Cell::format_component(value_or_func));
+                    self.evaluate_atom(value_or_func)
+                }
+            } else {
+                trace!("Didn't find value/function for {}", symbol_name_ptr);
+                Ok(statement)
+            }
+        } else if is_pointer(list_head.car) {
+            trace!("Found pointer to {}", ptr(list_head.car));
+            let result = self.evaluate_atom(list_head.car)?;
+            if list_head.cdr == 0 {
+                return Ok(result);
+            }
+            self.evaluate_atom(list_head.cdr)
+        } else {
+            unreachable!()
+        }
+    }
+
     pub(crate) fn evaluate_atom(&self, statement: u64) -> Result<u64, Error> {
         *self.cycle_count.borrow_mut() += 1;
         if MAX_CYCLES != 0 && *self.cycle_count.borrow() > MAX_CYCLES {
@@ -60,107 +163,9 @@ impl LispEnv {
         } else if is_number(statement) {
             Ok(statement)
         } else if is_symbol_ptr(statement) {
-            let symbol_cell_car = self.memory.borrow()[ptr(statement)].car;
-            let last_stack_idx = self.get_last_cell_idx(as_ptr(self.stack_frames));
-            let last_frame_ptr = self.memory.borrow()[last_stack_idx].car;
-            let stack_symbols =
-                Symbol::as_symbol(self.memory.borrow()[ptr(last_frame_ptr)].car, self);
-            let symbol_name = Cell::decode_symbol_name(symbol_cell_car);
-            trace!("Resolving value of symbol {}", symbol_name);
-            if let Some(value) = stack_symbols.get_property_value_by_ptr(symbol_cell_car) {
-                trace!(
-                    "Found value for {}: {}",
-                    symbol_name,
-                    Cell::format_component(value)
-                );
-                // returned value will be a SLOT, not the property itself
-                self.evaluate_atom(value)
-            } else {
-                trace!("Did not find value for {}", symbol_name);
-                Ok(statement)
-            }
+            self.evaluate_symbol(statement)
         } else if is_pointer(statement) {
-            // Then it's a list
-            let list_head = self.memory.borrow()[ptr(statement)].clone();
-            if is_number(list_head.car) {
-                let mut previous_cell_idx = 0_usize;
-                let mut current_cell = list_head;
-                let mut new_head = 0_usize;
-                loop {
-                    let statement_result = self.evaluate_atom(current_cell.car)?;
-                    let new_cell_idx = self.insert_cell(Cell {
-                        car: statement_result,
-                        cdr: 0,
-                    });
-                    if new_head == 0 {
-                        new_head = new_cell_idx;
-                    }
-                    if previous_cell_idx != 0 {
-                        let mut previous_cell = &mut self.memory.borrow_mut()[previous_cell_idx];
-                        previous_cell.cdr = as_ptr(new_cell_idx);
-                    }
-
-                    if current_cell.cdr == 0 {
-                        break;
-                    } else {
-                        current_cell = self.memory.borrow()[ptr(current_cell.cdr)].clone();
-                        previous_cell_idx = new_cell_idx;
-                    }
-                }
-
-                // for now, return the whole list as such
-                Ok(as_ptr(new_head))
-            } else if is_symbol_ptr(list_head.car) {
-                let symbol_name_ptr = self.memory.borrow()[ptr(list_head.car)].car;
-                let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
-                let current_frame_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
-                let current_frame = self.memory.borrow()[current_frame_slot].car;
-                let frame_symbols =
-                    Symbol::as_symbol(self.memory.borrow()[ptr(current_frame)].car, self);
-                trace!("Resolving symbol {}", symbol_name);
-                if let Some(function) = self.functions.get(&symbol_name) {
-                    trace!(
-                        "Calling function {} on memory idx {}",
-                        symbol_name,
-                        ptr(list_head.cdr)
-                    );
-                    let result = function.function(ptr(list_head.cdr), self);
-                    Ok(result)
-                } else if let Some(value_or_func) =
-                    frame_symbols.get_property_value_by_ptr(symbol_name_ptr)
-                {
-                    if is_pointer(value_or_func) {
-                        // TODO For now we won't bother that `value_or_func` should probably be a
-                        //      symbol pointer, since we have [val | name]
-                        let value_cell = self.memory.borrow()[ptr(value_or_func)].clone();
-                        trace!("Target cell: {:?}", value_cell);
-                        if is_pointer(value_cell.car)
-                            && is_pointer(value_cell.cdr)
-                            && !value_cell.is_nil()
-                        {
-                            self.call_function(value_cell, list_head.cdr)
-                        } else {
-                            trace!("Found value: {}", Cell::format_component(value_or_func));
-                            self.evaluate_atom(value_cell.car)
-                        }
-                    } else {
-                        trace!("Found value: {}", Cell::format_component(value_or_func));
-                        self.evaluate_atom(value_or_func)
-                    }
-                } else {
-                    trace!("Didn't find value/function for {}", symbol_name);
-                    Ok(statement)
-                }
-            } else if is_pointer(list_head.car) {
-                trace!("Found pointer to {}", ptr(list_head.car));
-                let result = self.evaluate_atom(list_head.car)?;
-                if list_head.cdr == 0 {
-                    return Ok(result);
-                }
-                self.evaluate_atom(list_head.cdr)
-            } else {
-                unreachable!()
-            }
+            self.evaluate_list(statement)
         } else {
             unreachable!()
         }
