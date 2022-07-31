@@ -49,20 +49,24 @@ impl<'a> Frame<'a> {
             trace!("--- fetching last stack ptr");
             // self.print_memory();
 
-            let frame_symbol_map =
-                Symbol::as_symbol(env.memory.borrow()[ptr(last_frame_ptr)].car, env);
-            let symbol_map_properties_ptr = frame_symbol_map.properties_ptr();
+            // TODO Copying the symbols over is very costly
 
-            let property_pointers = env.memory.borrow()[ptr(symbol_map_properties_ptr)]
-                .iter(env)
-                .collect::<Vec<u64>>();
-            for property_ptr in property_pointers {
-                let (prop_name, prop_val) = {
-                    let prop_cell = &env.memory.borrow()[ptr(property_ptr)];
-                    (prop_cell.cdr, prop_cell.car)
-                };
-                // FIXME Super simple copy, actually requires deep copies.
-                // self.print_memory();
+            let property_values = {
+                let mem = env.memory.borrow();
+
+                let frame_symbol_map = Symbol::as_symbol(mem[ptr(last_frame_ptr)].car, env);
+                let symbol_map_properties_ptr = frame_symbol_map.properties_ptr();
+
+                mem[ptr(symbol_map_properties_ptr)]
+                    .iter(env)
+                    .map(|property_ptr| {
+                        let prop_cell = &mem[ptr(property_ptr)];
+                        (prop_cell.cdr, prop_cell.car)
+                        // FIXME Super simple copy, actually requires deep copies.
+                    })
+                    .collect::<Vec<_>>()
+            };
+            for (prop_name, prop_val) in property_values {
                 frame_map.append_property(prop_name, prop_val);
             }
         }
@@ -78,15 +82,6 @@ impl<'a> Frame<'a> {
         }
     }
 
-    // pub fn as_frame(frame_ptr: u64, env: &'a LispEnv) -> Self {
-    //     let frame_cell = &env.memory.borrow()[ptr(frame_ptr)];
-    //     Frame {
-    //         symbol_map_ptr: frame_cell.car,
-    //         previous_frame_idx: xxx,
-    //         env,
-    //     }
-    // }
-
     pub fn symbol_map(&self) -> Symbol<'a> {
         Symbol::as_symbol(self.symbol_map_ptr, self.env)
     }
@@ -100,7 +95,7 @@ impl<'a> Frame<'a> {
     pub fn deallocate(self) {
         self.env.memory.borrow_mut()[self.previous_frame_idx].cdr = 0; // frame deallocation
         self.symbol_map().deallocate();
-        self.env.memory.borrow_mut()[ptr(self.frame_ptr)].deallocate();
+        self.env.memory.borrow_mut().remove(ptr(self.frame_ptr));
         trace!("Deallocated frame {}", ptr(self.symbol_map_ptr));
     }
 }

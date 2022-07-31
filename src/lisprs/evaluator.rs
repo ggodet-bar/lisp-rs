@@ -151,9 +151,9 @@ impl LispEnv {
             panic!("Forced exit");
         }
 
-        if *self.cycle_count.borrow() % GC_PERIOD == 0 {
-            self.run_garbage_collector();
-        }
+        // if *self.cycle_count.borrow() % GC_PERIOD == 0 {
+        //     self.run_garbage_collector();
+        // }
 
         trace!("Evaluating statement {}", Cell::format_component(statement));
 

@@ -190,11 +190,12 @@ impl LispEnv {
         }
 
         let mut previous_cell_idx = ptr(list_ptr);
-        let mut cell_cdr = self.memory.borrow()[previous_cell_idx].cdr;
+        let mem = self.memory.borrow();
+        let mut cell_cdr = mem[previous_cell_idx].cdr;
 
         while cell_cdr != 0 {
             previous_cell_idx = ptr(cell_cdr);
-            cell_cdr = self.memory.borrow()[previous_cell_idx].cdr;
+            cell_cdr = mem[previous_cell_idx].cdr;
         }
 
         return previous_cell_idx;
@@ -219,12 +220,12 @@ impl LispEnv {
         Symbol::as_symbol(self.internal_symbols_key, &self)
     }
 
-    pub fn run_garbage_collector(&self) {
-        trace!("Running GC");
-
-        let memory = &mut self.memory.borrow_mut();
-        memory.retain(|_key, val| !val.is_deallocated())
-    }
+    // pub fn run_garbage_collector(&self) {
+    //     trace!("Running GC");
+    //
+    //     let memory = &mut self.memory.borrow_mut();
+    //     memory.retain(|_key, val| !val.is_deallocated())
+    // }
 }
 
 #[cfg(test)]
