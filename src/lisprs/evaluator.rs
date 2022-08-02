@@ -22,10 +22,15 @@ impl LispEnv {
         if self.get_list_length(params_list_ptr) != self.get_list_length(arg_list_ptr) {
             unimplemented!("Param/arg mismatch");
         }
-        let first_param = self.memory.borrow()[ptr(params_list_ptr)].car;
-        // Param is probably a symbol, so we dereference its name
-        let first_param = self.memory.borrow()[ptr(first_param)].car;
-        let first_arg = self.memory.borrow()[ptr(arg_list_ptr)].car;
+        let (first_param, first_arg) = {
+            let mem = self.memory.borrow();
+            let first_param = mem[ptr(params_list_ptr)].car;
+            // Param is probably a symbol, so we dereference its name
+            let first_param = mem[ptr(first_param)].car;
+            let first_arg = mem[ptr(arg_list_ptr)].car;
+
+            (first_param, first_arg)
+        };
         let first_arg_result = self.evaluate_atom(first_arg).unwrap();
         let frame = self.allocate_frame();
         trace!("New frame ptr: {}", ptr(frame.symbol_map_ptr));
@@ -43,10 +48,16 @@ impl LispEnv {
     }
 
     fn evaluate_symbol(&self, statement: u64) -> Result<u64, Error> {
-        let symbol_cell_car = self.memory.borrow()[ptr(statement)].car;
-        let last_stack_idx = self.get_last_cell_idx(as_ptr(self.stack_frames));
-        let last_frame_ptr = self.memory.borrow()[last_stack_idx].car;
-        let stack_symbols = Symbol::as_symbol(self.memory.borrow()[ptr(last_frame_ptr)].car, self);
+        let (symbol_cell_car, stack_symbols) = {
+            let mem = self.memory.borrow();
+            let symbol_cell_car = mem[ptr(statement)].car;
+            let last_stack_idx = self.get_last_cell_idx(as_ptr(self.stack_frames));
+            let last_frame_ptr = mem[last_stack_idx].car;
+            let stack_symbols = Symbol::as_symbol(mem[ptr(last_frame_ptr)].car, self);
+
+            (symbol_cell_car, stack_symbols)
+        };
+
         // let symbol_name = Cell::decode_symbol_name(symbol_cell_car);
         trace!("Resolving value of symbol {}", symbol_cell_car);
         if let Some(value) = stack_symbols.get_property_value_by_ptr(symbol_cell_car) {
@@ -93,12 +104,15 @@ impl LispEnv {
 
             Ok(as_ptr(new_head))
         } else if is_symbol_ptr(list_head.car) {
-            let symbol_name_ptr = self.memory.borrow()[ptr(list_head.car)].car;
-            // let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
-            let current_frame_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
-            let current_frame = self.memory.borrow()[current_frame_slot].car;
-            let frame_symbols =
-                Symbol::as_symbol(self.memory.borrow()[ptr(current_frame)].car, self);
+            let (frame_symbols, symbol_name_ptr) = {
+                let mem = self.memory.borrow();
+                let symbol_name_ptr = mem[ptr(list_head.car)].car;
+                // let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
+                let current_frame_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
+                let current_frame = mem[current_frame_slot].car;
+                let frame_symbols = Symbol::as_symbol(mem[ptr(current_frame)].car, self);
+                (frame_symbols, symbol_name_ptr)
+            };
             trace!("Resolving symbol {}", symbol_name_ptr);
             if let Some(function) = self.functions.get(&symbol_name_ptr) {
                 trace!(
@@ -108,8 +122,9 @@ impl LispEnv {
                 );
                 let result = function.function(ptr(list_head.cdr), self);
                 Ok(result)
-            } else if let Some(value_or_func) =
-                frame_symbols.get_property_value_by_ptr(symbol_name_ptr)
+            } else if let Some(value_or_func) = frame_symbols
+                .get_property_value_by_ptr(symbol_name_ptr)
+                .or_else(|| self.global_map().get_property_value_by_ptr(symbol_name_ptr))
             {
                 if is_pointer(value_or_func) {
                     // TODO For now we won't bother that `value_or_func` should probably be a

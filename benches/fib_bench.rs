@@ -8,19 +8,24 @@ fn fibonacci(program: usize, env: &mut lisprs::LispEnv) {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let mut env = lisprs::LispEnv::new();
-    let program = env
-        .parse(
-            r#"
+    // returns the nth item in the Fibonacci sequence
+    for i in [5, 10, 20, 30] {
+        c.bench_function(&format!("fib {}", i), |b| {
+            b.iter(|| {
+                let mut env = lisprs::LispEnv::new();
+                let program = env
+                    .parse(&format!(
+                        r#"
     (def fib (N)
     	(if (<= N 1) N (+ (fib (- N 1)) (fib (- N 2)))))
-    (fib 10)"#,
-        )
-        .unwrap();
-    // returns the nth item in the Fibonacci sequence
-    c.bench_function("fib 10", |b| {
-        b.iter(|| fibonacci(black_box(program), &mut env))
-    });
+    (fib {})"#,
+                        i
+                    ))
+                    .unwrap();
+                fibonacci(black_box(program), &mut env)
+            })
+        });
+    }
 }
 
 criterion_group!(benches, criterion_benchmark);

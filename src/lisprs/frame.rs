@@ -29,27 +29,39 @@ impl<'a> Frame<'a> {
     /// Allocates a new execution frame, adds it to frames stack, and returns the new pointer
     /// to this new frame map and to the previous frame cell (for deallocation purposes).
     pub fn allocate(env: &'a LispEnv) -> Self {
+        // Remember that `last` will return the last VALUE of the iterator, not the last SLOT
+        // pointer!
+        let first_frame_cell = env.memory.borrow()[env.stack_frames].clone();
+        let first_frame_ptr = first_frame_cell.car;
+        let last_frame_ptr = first_frame_cell.iter(env).last().unwrap();
+        // Pointing at the previous frame will allow us to search through the properties more efficiently
+
         let frame_map = Symbol::allocate(Some("_frame_"), 0, &env);
         let new_frame = env.insert_cell(Cell {
             car: frame_map.ptr(),
-            cdr: 0,
+            cdr: last_frame_ptr,
         });
         let new_slot = env.insert_cell(Cell {
             car: as_ptr(new_frame),
             cdr: 0,
         });
 
-        {
+        if last_frame_ptr != first_frame_ptr {
+            // we're skipping the global symbols, which is far too big to copy every time
+
             // Remember that `last` will return the last VALUE of the iterator, not the last SLOT
             // pointer!
-            let last_frame_ptr = env.memory.borrow()[env.stack_frames]
-                .iter(env)
-                .last()
-                .unwrap();
+            // let last_frame_ptr = env.memory.borrow()[env.stack_frames]
+            //     .iter(env)
+            //     .last()
+            //     .unwrap();
             trace!("--- fetching last stack ptr");
             // self.print_memory();
 
-            // TODO Copying the symbols over is very costly
+            // FIXME Smarter symbol handling:
+            //       1. Frame contains a pointer to its previous frame, hence to every previous map
+            //       2. Looking up a symbol involves scanning the frames, in reverse order
+            //       3. Appending adds to the local map only
 
             let property_values = {
                 let mem = env.memory.borrow();
@@ -103,7 +115,6 @@ impl<'a> Frame<'a> {
 #[cfg(test)]
 mod tests {
     use crate::lisprs::cell::Cell;
-    use crate::lisprs::list::List;
     use crate::lisprs::util::{is_symbol_ptr, ptr};
     use crate::lisprs::LispEnv;
 
@@ -123,27 +134,36 @@ mod tests {
     }
 
     #[test]
-    fn new_frame_copies_symbols_from_previous_frame() {
+    fn new_frame_copies_symbols_does_not_copy_symbols_from_global_map() {
         let env = LispEnv::new();
         let frame = env.allocate_frame();
         let root_symbol_map_size = env.global_map().property_count();
         assert_ne!(0, root_symbol_map_size);
-        assert_eq!(frame.symbol_map().property_count(), root_symbol_map_size);
+        assert_eq!(0, frame.symbol_map().property_count());
+    }
 
-        let root_prop_names_ptr = env.global_map().properties_ptr();
-        let list_head_cell = List::as_list(root_prop_names_ptr, &env);
-        let root_prop_names = list_head_cell
-            .iter()
-            .map(|prop_ptr| env.memory.borrow()[ptr(prop_ptr)].cdr)
-            .map(|name| Cell::decode_symbol_name(name))
-            .collect::<Vec<String>>();
+    #[test]
+    fn new_frame_copies_symbol_from_non_root_frame() {
+        let env = LispEnv::new();
+        let frame = env.allocate_frame();
+        frame.append_property(Cell::encode_symbol_name("foo").0, 10);
+        frame.append_property(Cell::encode_symbol_name("bar").0, 42);
+        frame.append_property(Cell::encode_symbol_name("foobar").0, 24);
+        assert_eq!(3, frame.symbol_map().property_count());
 
-        let frame_prop_cell = List::as_list(frame.symbol_map().properties_ptr(), &env);
-        let frame_prop_names = frame_prop_cell
-            .iter()
-            .map(|prop_ptr| env.memory.borrow()[ptr(prop_ptr)].cdr)
-            .map(|name| Cell::decode_symbol_name(name))
-            .collect::<Vec<String>>();
-        assert_eq!(root_prop_names, frame_prop_names);
+        let top_frame = env.allocate_frame();
+        assert_eq!(3, top_frame.symbol_map().property_count());
+        assert_eq!(
+            Some(10),
+            top_frame.symbol_map().get_property_value_by_name("foo")
+        );
+        assert_eq!(
+            Some(42),
+            top_frame.symbol_map().get_property_value_by_name("bar")
+        );
+        assert_eq!(
+            Some(24),
+            top_frame.symbol_map().get_property_value_by_name("foobar")
+        );
     }
 }
