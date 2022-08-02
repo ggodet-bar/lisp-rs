@@ -22,7 +22,7 @@ pub trait LispFunction: Sync {
     fn function(&self, arg_idx: usize, env: &LispEnv) -> u64;
 }
 
-type Memory = RefCell<Slab<Cell>>;
+pub type Memory = RefCell<Slab<Cell>>;
 
 pub struct LispEnv {
     pub(crate) memory: Memory,
@@ -154,11 +154,10 @@ impl LispEnv {
     /// Appends the property to the last entry of the frame stack
     pub fn append_property_to_stack(&self, prop_name_ptr: u64, prop_val: u64) -> u64 {
         let stack_tail_car = {
-            let stack_head_cell = &self.memory.borrow()[self.stack_frames];
-            let last_frame_ptr = stack_head_cell.iter(self).last().unwrap();
+            let last_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
+            let last_frame_ptr = self.memory.borrow()[last_slot].car;
             trace!("Will append to stack idx {}", ptr(last_frame_ptr));
             self.memory.borrow()[ptr(last_frame_ptr)].car
-            // remember that this returns the last VALUE, mot the last list SLOT!
         };
 
         let symbol_map = Symbol::as_symbol(stack_tail_car, self);
@@ -184,6 +183,7 @@ impl LispEnv {
             .is_some()
     }
 
+    /// Note that this method is more performant than using `Cell::iter::last`
     pub fn get_last_cell_idx(&self, list_ptr: u64) -> usize {
         if !is_pointer(list_ptr) {
             return 0;

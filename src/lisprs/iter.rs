@@ -1,12 +1,15 @@
 use crate::lisprs::cell::Cell;
+use crate::lisprs::lisp_env::Memory;
 use crate::lisprs::util::ptr;
 use crate::lisprs::LispEnv;
+use slab::Slab;
+use std::cell::{Ref, RefCell};
 use std::iter::Iterator;
 
 pub struct CellIter<'a> {
     pub(crate) next_cell_ptr: Option<u64>,
     pub(crate) root_cell: Cell,
-    pub(crate) env: &'a LispEnv,
+    pub(crate) borrowed_mem: Ref<'a, Slab<Cell>>,
 }
 
 impl<'a> Iterator for CellIter<'a> {
@@ -17,7 +20,7 @@ impl<'a> Iterator for CellIter<'a> {
             if *next_cell_ptr == 0 {
                 return None;
             }
-            let new_cell = &self.env.memory.borrow()[ptr(*next_cell_ptr)];
+            let new_cell = &self.borrowed_mem[ptr(*next_cell_ptr)];
             *next_cell_ptr = new_cell.cdr;
             Some(new_cell.car)
         } else {
@@ -32,7 +35,7 @@ impl Cell {
         CellIter {
             next_cell_ptr: None,
             root_cell: self.clone(),
-            env: lisp_env,
+            borrowed_mem: lisp_env.memory.borrow(),
         }
     }
 }
@@ -40,7 +43,7 @@ impl Cell {
 pub struct CellSlotIter<'a> {
     pub(crate) next_cell_ptr: Option<u64>,
     pub(crate) root_cell: Cell,
-    pub(crate) env: &'a LispEnv,
+    pub(crate) borrowed_mem: Ref<'a, Slab<Cell>>,
 }
 
 impl<'a> Iterator for CellSlotIter<'a> {
@@ -51,7 +54,7 @@ impl<'a> Iterator for CellSlotIter<'a> {
             if *next_cell_ptr == 0 {
                 return None;
             }
-            let new_cell = &self.env.memory.borrow()[ptr(*next_cell_ptr)];
+            let new_cell = &self.borrowed_mem[ptr(*next_cell_ptr)];
             *next_cell_ptr = new_cell.cdr;
             Some((new_cell.car, *next_cell_ptr))
         } else {

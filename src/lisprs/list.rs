@@ -16,7 +16,7 @@ impl<'a> List<'a> {
         CellIter {
             next_cell_ptr: None,
             root_cell: self.env.memory.borrow()[ptr(self.ptr)].clone(),
-            env: self.env,
+            borrowed_mem: self.env.memory.borrow(),
         }
     }
 
@@ -24,7 +24,7 @@ impl<'a> List<'a> {
         CellSlotIter {
             next_cell_ptr: None,
             root_cell: self.env.memory.borrow()[ptr(self.ptr)].clone(),
-            env: self.env,
+            borrowed_mem: self.env.memory.borrow(),
         }
     }
 }

@@ -29,12 +29,15 @@ impl<'a> Frame<'a> {
     /// Allocates a new execution frame, adds it to frames stack, and returns the new pointer
     /// to this new frame map and to the previous frame cell (for deallocation purposes).
     pub fn allocate(env: &'a LispEnv) -> Self {
-        // Remember that `last` will return the last VALUE of the iterator, not the last SLOT
-        // pointer!
-        let first_frame_cell = env.memory.borrow()[env.stack_frames].clone();
-        let first_frame_ptr = first_frame_cell.car;
-        let last_frame_ptr = first_frame_cell.iter(env).last().unwrap();
-        // Pointing at the previous frame will allow us to search through the properties more efficiently
+        let (first_frame_ptr, last_frame_ptr) = {
+            let mem = env.memory.borrow();
+            let first_frame_cell = mem[env.stack_frames].clone();
+            let first_frame_ptr = first_frame_cell.car;
+            let last_frame_idx = env.get_last_cell_idx(as_ptr(env.stack_frames));
+            let last_frame_ptr = mem[last_frame_idx].car;
+            // Pointing at the previous frame will allow us to search through the properties more efficiently
+            (first_frame_ptr, last_frame_ptr)
+        };
 
         let frame_map = Symbol::allocate(Some("_frame_"), 0, &env);
         let new_frame = env.insert_cell(Cell {

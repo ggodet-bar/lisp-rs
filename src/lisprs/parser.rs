@@ -166,7 +166,6 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
 
-        env.print_memory();
         // The result payload consists of a list of a single statement, pointing at a list with a
         // single value
         assert_eq!(original_memory_size + 2, env.memory.borrow().len());
