@@ -10,7 +10,11 @@ impl LispFunction for Add {
         "+".to_string()
     }
 
-    fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        args_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let sum = {
             let mut sum = 0;
             let mut current_cell = env.memory.borrow()[args_idx].clone();
@@ -18,7 +22,7 @@ impl LispFunction for Add {
             loop {
                 trace!("+ current cell: {:?}", current_cell);
 
-                let value = env.evaluate_atom(current_cell.car).unwrap();
+                let value = env.evaluate_atom(current_cell.car)?;
                 if !is_number(value) {
                     panic!("Unexpected result in addition");
                 }
@@ -36,7 +40,7 @@ impl LispFunction for Add {
         };
         // TODO Return a short nb whenever possible, or encode the result on the heap and
         //      return its pointer
-        number_pointer(sum)
+        Ok(number_pointer(sum))
     }
 }
 

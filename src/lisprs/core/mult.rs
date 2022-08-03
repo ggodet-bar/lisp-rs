@@ -11,17 +11,21 @@ impl LispFunction for Mult {
         "*".to_string()
     }
 
-    fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        args_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let result = {
             let args = env.memory.borrow()[args_idx].clone();
-            let mut result = as_number(env.evaluate_atom(args.car).unwrap());
+            let mut result = as_number(env.evaluate_atom(args.car)?);
             let mut current_cell = args;
             while current_cell.cdr != 0 {
                 trace!("* current cell: {:?}", current_cell);
                 let next_cell = env.memory.borrow()[current_cell.cdr_ptr()].clone();
                 trace!("Next cell: {:?}", next_cell);
 
-                let next_value = env.evaluate_atom(next_cell.car).unwrap();
+                let next_value = env.evaluate_atom(next_cell.car)?;
                 if !is_number(next_value) {
                     panic!("Expected a number!");
                 }
@@ -34,11 +38,7 @@ impl LispFunction for Mult {
 
             result
         };
-        // (env.insert_cell(Cell {
-        //     car: number_pointer(result.abs() as u64, result < 0),
-        //     cdr: 0,
-        // }) << 4) as u64
-        number_pointer(result)
+        Ok(number_pointer(result))
     }
 }
 

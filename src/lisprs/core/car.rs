@@ -11,15 +11,19 @@ impl LispFunction for Car {
         "car".to_string()
     }
 
-    fn function(&self, arg_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        arg_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let first_arg_ptr = env.memory.borrow()[arg_idx].car;
-        let first_arg_result = env.evaluate_atom(first_arg_ptr).unwrap();
+        let first_arg_result = env.evaluate_atom(first_arg_ptr)?;
         trace!(
             "First arg ptr: {}",
             Cell::format_component(first_arg_result)
         );
         if first_arg_result == 0 {
-            return 0;
+            return Ok(0);
         }
         if is_symbol_ptr(first_arg_result) {
             unimplemented!()
@@ -27,7 +31,7 @@ impl LispFunction for Car {
             let result = env.memory.borrow()[ptr(first_arg_result)].car;
             trace!("Car result {}", Cell::format_component(result));
 
-            result
+            Ok(result)
         }
     }
 }

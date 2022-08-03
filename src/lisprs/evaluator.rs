@@ -120,8 +120,7 @@ impl LispEnv {
                     symbol_name_ptr,
                     ptr(list_head.cdr)
                 );
-                let result = function.function(ptr(list_head.cdr), self);
-                Ok(result)
+                function.function(ptr(list_head.cdr), self)
             } else if let Some(value_or_func) = frame_symbols
                 .get_property_value_by_ptr(symbol_name_ptr)
                 .or_else(|| self.global_map().get_property_value_by_ptr(symbol_name_ptr))

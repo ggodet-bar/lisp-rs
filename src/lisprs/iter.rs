@@ -1,9 +1,8 @@
 use crate::lisprs::cell::Cell;
-use crate::lisprs::lisp_env::Memory;
 use crate::lisprs::util::ptr;
 use crate::lisprs::LispEnv;
 use slab::Slab;
-use std::cell::{Ref, RefCell};
+use std::cell::Ref;
 use std::iter::Iterator;
 
 pub struct CellIter<'a> {

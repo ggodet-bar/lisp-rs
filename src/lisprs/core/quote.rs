@@ -9,7 +9,11 @@ impl LispFunction for Quote {
         "quote".to_string()
     }
 
-    fn function(&self, args_idx: usize, _env: &LispEnv) -> u64 {
-        as_ptr(args_idx)
+    fn function(
+        &self,
+        args_idx: usize,
+        _env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
+        Ok(as_ptr(args_idx))
     }
 }

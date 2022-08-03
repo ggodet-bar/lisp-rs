@@ -9,7 +9,11 @@ impl LispFunction for Sub {
         "-".to_string()
     }
 
-    fn function(&self, arg_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        arg_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let (first_term, second_term) = {
             let first_arg_cell = &env.memory.borrow()[arg_idx];
             let second_arg_cell = &env.memory.borrow()[ptr(first_arg_cell.cdr)];
@@ -17,14 +21,15 @@ impl LispFunction for Sub {
             (first_arg_cell.car, second_arg_cell.car)
         };
 
-        let first_term = env.evaluate_atom(first_term).unwrap();
-        let second_term = env.evaluate_atom(second_term).unwrap();
+        let first_term = env.evaluate_atom(first_term)?;
+        let second_term = env.evaluate_atom(second_term)?;
 
         if !is_number(first_term) || !is_number(second_term) {
             panic!("Looking for numbers");
         }
 
-        number_pointer(as_number(first_term) - as_number(second_term))
+        let result = number_pointer(as_number(first_term) - as_number(second_term));
+        Ok(result)
     }
 }
 

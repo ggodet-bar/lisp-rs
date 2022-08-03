@@ -1,5 +1,6 @@
 mod cell;
 mod core;
+pub mod error;
 pub mod evaluator;
 mod frame;
 mod iter;

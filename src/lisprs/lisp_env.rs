@@ -19,7 +19,7 @@ pub const GC_PERIOD: usize = 5000;
 
 pub trait LispFunction: Sync {
     fn symbol(&self) -> String;
-    fn function(&self, arg_idx: usize, env: &LispEnv) -> u64;
+    fn function(&self, arg_idx: usize, env: &LispEnv) -> Result<u64, super::evaluator::Error>;
 }
 
 pub type Memory = RefCell<Slab<Cell>>;
@@ -134,14 +134,14 @@ impl LispEnv {
         env
     }
 
-    fn load_core_library(&mut self) -> Result<(), ()> {
+    fn load_core_library(&mut self) -> Result<(), super::error::Error> {
         for file in Assets::iter() {
             trace!("Load {}", file.as_ref());
             let raw = Assets::get(file.as_ref()).unwrap().data;
-            let contents = std::str::from_utf8(&raw).unwrap();
+            let contents = std::str::from_utf8(&raw)?;
 
-            let program = self.parse(contents).unwrap();
-            let _result = self.evaluate(program).unwrap();
+            let program = self.parse(contents)?;
+            let _result = self.evaluate(program)?;
         }
 
         Ok(())

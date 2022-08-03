@@ -9,14 +9,18 @@ impl LispFunction for Not {
         "not".to_string()
     }
 
-    fn function(&self, arg_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        arg_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let first_ptr = env.memory.borrow()[arg_idx].car;
-        let result = env.evaluate_atom(first_ptr).unwrap();
-        if result == 0 {
+        let result = env.evaluate_atom(first_ptr)?;
+        Ok(if result == 0 {
             Cell::encode_symbol_name("T").0
         } else {
             0
-        }
+        })
     }
 }
 

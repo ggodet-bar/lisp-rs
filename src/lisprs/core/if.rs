@@ -9,17 +9,21 @@ impl LispFunction for If {
         "if".to_string()
     }
 
-    fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        args_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let condition_cell = env.memory.borrow()[args_idx].clone();
         let true_cell = env.memory.borrow()[ptr(condition_cell.cdr)].clone();
-        let condition = env.evaluate_atom(condition_cell.car).unwrap();
+        let condition = env.evaluate_atom(condition_cell.car)?;
         if condition == 0 || is_number(condition) || is_symbol_ptr(condition) {
             // if post-evaluation the symbol returns itself, then its value is true
             if condition != 0 && as_number(condition_cell.car) != 0 {
-                env.evaluate_atom(true_cell.car).unwrap()
+                env.evaluate_atom(true_cell.car)
             } else {
                 let false_cell_car = env.memory.borrow()[ptr(true_cell.cdr)].car;
-                env.evaluate_atom(false_cell_car).unwrap()
+                env.evaluate_atom(false_cell_car)
             }
         } else {
             unimplemented!()

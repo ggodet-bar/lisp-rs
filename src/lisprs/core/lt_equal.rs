@@ -9,7 +9,11 @@ impl LispFunction for LtEqual {
         "<=".to_string()
     }
 
-    fn function(&self, arg_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        arg_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let (first_term, second_term) = {
             let mem = env.memory.borrow();
             let first_arg_cell = &mem[arg_idx];
@@ -18,18 +22,18 @@ impl LispFunction for LtEqual {
             (first_arg_cell.car, second_arg_cell.car)
         };
 
-        let first_term = env.evaluate_atom(first_term).unwrap();
-        let second_term = env.evaluate_atom(second_term).unwrap();
+        let first_term = env.evaluate_atom(first_term)?;
+        let second_term = env.evaluate_atom(second_term)?;
 
         if !is_number(first_term) || !is_number(second_term) {
             panic!("Looking for numbers");
         }
 
-        if as_number(first_term) <= as_number(second_term) {
+        Ok(if as_number(first_term) <= as_number(second_term) {
             true_symbol()
         } else {
             0
-        }
+        })
     }
 }
 

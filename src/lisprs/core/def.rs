@@ -11,7 +11,11 @@ impl LispFunction for Def {
         "def".to_string()
     }
 
-    fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        args_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let arg_values = List::as_list(as_ptr(args_idx), &env)
             .iter()
             .collect::<Vec<u64>>();
@@ -55,6 +59,6 @@ impl LispFunction for Def {
             }
         };
 
-        value_head
+        Ok(value_head)
     }
 }

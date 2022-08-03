@@ -10,11 +10,15 @@ impl LispFunction for Cdr {
         "cdr".to_string()
     }
 
-    fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        args_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let list_ptr = env.memory.borrow()[args_idx].car;
-        let evaluated_ptr = env.evaluate_atom(list_ptr).unwrap();
+        let evaluated_ptr = env.evaluate_atom(list_ptr)?;
         println!("First cdr arg: {}", Cell::format_component(evaluated_ptr));
-        env.memory.borrow()[ptr(evaluated_ptr)].cdr
+        Ok(env.memory.borrow()[ptr(evaluated_ptr)].cdr)
     }
 }
 

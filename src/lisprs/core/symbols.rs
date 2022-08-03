@@ -10,7 +10,11 @@ impl LispFunction for Symbols {
         "symbols".to_string()
     }
 
-    fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        args_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         if args_idx == 0 {
             let symbol_name = {
                 let first_symbol_slot = &env.memory.borrow()[env.namespaces_idx];
@@ -27,7 +31,7 @@ impl LispFunction for Symbols {
             let mut result_cell = &mut env.memory.borrow_mut()[result_idx];
             println!("Symbol name is {}", symbol_name);
             result_cell.car = Cell::encode_symbol_name(&symbol_name).0;
-            (result_idx as u64) << 4
+            Ok((result_idx as u64) << 4)
         } else {
             unimplemented!()
         }

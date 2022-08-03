@@ -11,7 +11,11 @@ impl LispFunction for Eq {
         "=".to_string()
     }
 
-    fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        args_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let (first_arg_slot_car, second_arg_slot_car) = {
             let memory = env.memory.borrow();
             let first_arg_slot = &memory[args_idx];
@@ -34,12 +38,12 @@ impl LispFunction for Eq {
         // since first_arg_slot will be pointing to second_arg_slot, so we just compare the
         // actual values, i.e. the cars
         if !Eq::compare_half_cells(
-            env.evaluate_atom(first_arg_slot_car).unwrap(),
-            env.evaluate_atom(second_arg_slot_car).unwrap(),
+            env.evaluate_atom(first_arg_slot_car)?,
+            env.evaluate_atom(second_arg_slot_car)?,
             env,
             &mut pending_cells,
         ) {
-            return env.nil_key;
+            return Ok(0);
         }
 
         while let Some((left, right)) = pending_cells.pop_front() {
@@ -50,7 +54,7 @@ impl LispFunction for Eq {
                 env,
                 &mut pending_cells,
             ) {
-                return env.nil_key;
+                return Ok(0);
             }
 
             if !Eq::compare_half_cells(
@@ -59,11 +63,11 @@ impl LispFunction for Eq {
                 env,
                 &mut pending_cells,
             ) {
-                return env.nil_key;
+                return Ok(0);
             }
         }
 
-        true_symbol()
+        Ok(true_symbol())
     }
 }
 

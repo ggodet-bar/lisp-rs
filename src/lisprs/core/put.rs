@@ -10,7 +10,11 @@ impl LispFunction for Put {
         "put".to_string()
     }
 
-    fn function(&self, args_idx: usize, env: &LispEnv) -> u64 {
+    fn function(
+        &self,
+        args_idx: usize,
+        env: &LispEnv,
+    ) -> Result<u64, super::super::evaluator::Error> {
         let (_symbol_name, symbol_cell_car, property_name_cell_car, property_value) = {
             let memory = env.memory.borrow();
             let args = &memory[args_idx];
