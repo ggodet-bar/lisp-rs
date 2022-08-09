@@ -1,8 +1,10 @@
 use crate::lisprs::cell::Cell;
+use crate::lisprs::lisp_env::BorrowedCell;
 use crate::lisprs::symbol::Symbol;
 use crate::lisprs::util::{as_ptr, ptr};
 use crate::lisprs::LispEnv;
 use log::*;
+use std::cell::Ref;
 
 /// A stack frame has the following structure:
 ///
@@ -30,11 +32,11 @@ impl<'a> Frame<'a> {
     /// to this new frame map and to the previous frame cell (for deallocation purposes).
     pub fn allocate(env: &'a LispEnv) -> Self {
         let (first_frame_ptr, last_frame_ptr) = {
-            let mem = env.memory.borrow();
-            let first_frame_cell = mem[env.stack_frames].clone();
+            let mem = env.memory.state.borrow();
+            let first_frame_cell = mem.mem[env.stack_frames].clone();
             let first_frame_ptr = first_frame_cell.car;
             let last_frame_idx = env.get_last_cell_idx(as_ptr(env.stack_frames));
-            let last_frame_ptr = mem[last_frame_idx].car;
+            let last_frame_ptr = mem.mem[last_frame_idx].car;
             // Pointing at the previous frame will allow us to search through the properties more efficiently
             (first_frame_ptr, last_frame_ptr)
         };
@@ -67,15 +69,15 @@ impl<'a> Frame<'a> {
             //       3. Appending adds to the local map only
 
             let property_values = {
-                let mem = env.memory.borrow();
+                let mem = env.memory.state.borrow();
 
-                let frame_symbol_map = Symbol::as_symbol(mem[ptr(last_frame_ptr)].car, env);
+                let frame_symbol_map = Symbol::as_symbol(mem.mem[ptr(last_frame_ptr)].car, env);
                 let symbol_map_properties_ptr = frame_symbol_map.properties_ptr();
+                let cell = BorrowedCell::new(Ref::clone(&mem), ptr(symbol_map_properties_ptr));
 
-                mem[ptr(symbol_map_properties_ptr)]
-                    .iter(env)
+                cell.iter()
                     .map(|property_ptr| {
-                        let prop_cell = &mem[ptr(property_ptr)];
+                        let prop_cell = &mem.mem[ptr(property_ptr)];
                         (prop_cell.cdr, prop_cell.car)
                         // FIXME Super simple copy, actually requires deep copies.
                     })
@@ -87,7 +89,10 @@ impl<'a> Frame<'a> {
         }
 
         let last_frame_idx = env.get_last_cell_idx(as_ptr(env.stack_frames));
-        env.memory.borrow_mut()[last_frame_idx].set_cdr_pointer(new_slot);
+        env.memory
+            .borrow_mem_mut(last_frame_idx)
+            .cell
+            .set_cdr_pointer(new_slot);
 
         Self {
             frame_ptr: as_ptr(new_frame),
@@ -108,9 +113,18 @@ impl<'a> Frame<'a> {
     }
 
     pub fn deallocate(self) {
-        self.env.memory.borrow_mut()[self.previous_frame_idx].cdr = 0; // frame deallocation
+        self.env
+            .memory
+            .borrow_mem_mut(self.previous_frame_idx)
+            .cell
+            .cdr = 0; // frame deallocation
         self.symbol_map().deallocate();
-        self.env.memory.borrow_mut().remove(ptr(self.frame_ptr));
+        self.env
+            .memory
+            .state
+            .borrow_mut()
+            .mem
+            .remove(ptr(self.frame_ptr));
         trace!("Deallocated frame {}", ptr(self.symbol_map_ptr));
     }
 }
@@ -128,12 +142,12 @@ mod tests {
         assert!(is_symbol_ptr(frame.symbol_map_ptr));
         assert_eq!(env.stack_frames, frame.previous_frame_idx);
 
-        let head_stack_cdr = env.memory.borrow()[env.stack_frames].cdr;
-        let stack_slot_cell = &env.memory.borrow()[ptr(head_stack_cdr)];
-        assert_eq!(0, stack_slot_cell.cdr);
+        let head_stack_cdr = env.memory.borrow_mem(env.stack_frames).cell.cdr;
+        let stack_slot_cell = &env.memory.borrow_mem(ptr(head_stack_cdr));
+        assert_eq!(0, stack_slot_cell.cell.cdr);
 
-        let frame_cell = &env.memory.borrow()[ptr(stack_slot_cell.car)];
-        assert_eq!(frame_cell.car, frame.symbol_map_ptr);
+        let frame_cell = &env.memory.borrow_mem(ptr(stack_slot_cell.cell.car));
+        assert_eq!(frame_cell.cell.car, frame.symbol_map_ptr);
     }
 
     #[test]

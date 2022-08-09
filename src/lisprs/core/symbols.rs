@@ -17,7 +17,7 @@ impl LispFunction for Symbols {
     ) -> Result<u64, super::super::evaluator::Error> {
         if args_idx == 0 {
             let symbol_name = {
-                let first_symbol_slot = &env.memory.borrow()[env.namespaces_idx];
+                let first_symbol_slot = env.memory.borrow_mem(env.namespaces_idx).cell;
                 if first_symbol_slot.cdr != 0 {
                     unimplemented!("actual list of namespaces!")
                 }
@@ -28,9 +28,9 @@ impl LispFunction for Symbols {
             };
 
             let result_idx = env.allocate_empty_cell();
-            let mut result_cell = &mut env.memory.borrow_mut()[result_idx];
+            let result_cell = &mut env.memory.borrow_mem_mut(result_idx);
             println!("Symbol name is {}", symbol_name);
-            result_cell.car = Cell::encode_symbol_name(&symbol_name).0;
+            result_cell.cell.car = Cell::encode_symbol_name(&symbol_name).0;
             Ok((result_idx as u64) << 4)
         } else {
             unimplemented!()
@@ -54,8 +54,8 @@ mod tests {
         let result = result.unwrap();
         assert!(is_pointer(result));
 
-        let root_cell = &env.memory.borrow()[ptr(result)];
-        assert_eq!(Cell::encode_symbol_name("_lisprs").0, root_cell.car);
-        assert_eq!(0, root_cell.cdr);
+        let root_cell = &env.memory.borrow_mem(ptr(result));
+        assert_eq!(Cell::encode_symbol_name("_lisprs").0, root_cell.cell.car);
+        assert_eq!(0, root_cell.cell.cdr);
     }
 }

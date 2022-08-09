@@ -15,10 +15,10 @@ impl LispFunction for Cdr {
         args_idx: usize,
         env: &LispEnv,
     ) -> Result<u64, super::super::evaluator::Error> {
-        let list_ptr = env.memory.borrow()[args_idx].car;
+        let list_ptr = env.memory.borrow_mem(args_idx).cell.car;
         let evaluated_ptr = env.evaluate_atom(list_ptr)?;
         println!("First cdr arg: {}", Cell::format_component(evaluated_ptr));
-        Ok(env.memory.borrow()[ptr(evaluated_ptr)].cdr)
+        Ok(env.memory.borrow_mem(ptr(evaluated_ptr)).cell.cdr)
     }
 }
 
@@ -64,7 +64,7 @@ mod tests {
         let result = result.unwrap();
         assert!(is_pointer(result));
 
-        let first_item = env.memory.borrow()[ptr(result)].car;
+        let first_item = env.memory.borrow_mem(ptr(result)).cell.car;
         assert_eq!(2, as_number(first_item));
 
         let test = env.parse("(= (2 3 4) (cdr (1 2 3 4)))").unwrap();

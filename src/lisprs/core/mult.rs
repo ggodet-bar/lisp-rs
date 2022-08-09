@@ -17,12 +17,12 @@ impl LispFunction for Mult {
         env: &LispEnv,
     ) -> Result<u64, super::super::evaluator::Error> {
         let result = {
-            let args = env.memory.borrow()[args_idx].clone();
+            let args = env.memory.borrow_mem(args_idx).cell.clone();
             let mut result = as_number(env.evaluate_atom(args.car)?);
             let mut current_cell = args;
             while current_cell.cdr != 0 {
                 trace!("* current cell: {:?}", current_cell);
-                let next_cell = env.memory.borrow()[current_cell.cdr_ptr()].clone();
+                let next_cell = env.memory.borrow_mem(current_cell.cdr_ptr()).cell.clone();
                 trace!("Next cell: {:?}", next_cell);
 
                 let next_value = env.evaluate_atom(next_cell.car)?;

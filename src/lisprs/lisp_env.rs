@@ -1,12 +1,13 @@
 use crate::lisprs::cell::Cell;
 use crate::lisprs::core::CORE_FUNCTIONS;
 use crate::lisprs::frame::Frame;
+use crate::lisprs::iter::CellIter;
 use crate::lisprs::symbol::Symbol;
 use crate::lisprs::util::{as_ptr, is_pointer, number_pointer, ptr};
 use crate::lisprs::Assets;
 use log::*;
 use slab::Slab;
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -14,15 +15,61 @@ use std::str::FromStr;
 ///       debug stack overflows (0 means unlimited).
 pub const MAX_CYCLES: usize = 0;
 
-/// Defines how many statements should be evaluated before triggering a garbage collection.
-pub const GC_PERIOD: usize = 5000;
-
 pub trait LispFunction: Sync {
     fn symbol(&self) -> String;
     fn function(&self, arg_idx: usize, env: &LispEnv) -> Result<u64, super::evaluator::Error>;
 }
 
-pub type Memory = RefCell<Slab<Cell>>;
+pub struct Inner {
+    pub(crate) mem: Slab<Cell>,
+    pub(crate) last_stack_frame_idx: usize,
+
+    /// cf MAX_CYCLES
+    pub(crate) cycle_count: usize,
+}
+
+pub struct BorrowedCell<'a> {
+    pub(crate) inner_ref: Ref<'a, Inner>,
+    pub(crate) cell: Ref<'a, Cell>,
+}
+
+impl<'a> BorrowedCell<'a> {
+    pub fn new(inner_ref: Ref<'a, Inner>, idx: usize) -> Self {
+        let cell_inner_ref = Ref::clone(&inner_ref);
+        let cell = Ref::map(cell_inner_ref, |r| &r.mem[idx]);
+        Self { inner_ref, cell }
+    }
+
+    pub fn iter(self) -> CellIter<'a> {
+        CellIter {
+            next_cell_ptr: None,
+            root_cell: self,
+        }
+    }
+}
+
+pub struct BorrowedMutCell<'a> {
+    pub(crate) cell: RefMut<'a, Cell>,
+}
+
+pub struct Memory {
+    pub state: RefCell<Inner>,
+}
+
+impl Memory {
+    pub fn borrow_mem(&self, idx: usize) -> BorrowedCell {
+        let inner_ref = self.state.borrow();
+        let cell_inner_ref = Ref::clone(&inner_ref);
+        let cell = Ref::map(cell_inner_ref, |r| &r.mem[idx]);
+        BorrowedCell { inner_ref, cell }
+    }
+
+    pub fn borrow_mem_mut(&self, idx: usize) -> BorrowedMutCell {
+        BorrowedMutCell {
+            cell: RefMut::map(self.state.borrow_mut(), |r| &mut r.mem[idx]),
+        }
+    }
+}
 
 pub struct LispEnv {
     pub(crate) memory: Memory,
@@ -39,16 +86,13 @@ pub struct LispEnv {
 
     /// The function name is encoded so we don't need to decode every time we get a name pointer.
     pub(crate) functions: HashMap<u64, &'static dyn LispFunction>,
-
-    /// cf MAX_CYCLES
-    pub(crate) cycle_count: RefCell<usize>,
 }
 
 impl LispEnv {
     fn allocate_nil(&self) -> usize {
         let nil_key = {
-            let mut memory = self.memory.borrow_mut();
-            let nil_entry = memory.vacant_entry();
+            let mut memory = self.memory.state.borrow_mut();
+            let nil_entry = memory.mem.vacant_entry();
             let nil_key = nil_entry.key();
             let nil = Cell {
                 car: Cell::encode_symbol_name("NIL").0,
@@ -57,7 +101,7 @@ impl LispEnv {
             nil_entry.insert(nil);
             nil_key
         };
-        self.memory.borrow_mut().insert(Cell {
+        self.memory.state.borrow_mut().mem.insert(Cell {
             car: nil_key as u64,
             cdr: nil_key as u64,
         });
@@ -71,7 +115,7 @@ impl LispEnv {
     }
 
     pub fn allocate_empty_cell(&self) -> usize {
-        self.memory.borrow_mut().insert(Cell::empty())
+        self.memory.state.borrow_mut().mem.insert(Cell::empty())
     }
 
     pub fn encode_number(&self, s: &str) -> u64 {
@@ -87,18 +131,23 @@ impl LispEnv {
     }
 
     pub fn insert_cell(&self, cell: Cell) -> usize {
-        self.memory.borrow_mut().insert(cell)
+        self.memory.state.borrow_mut().mem.insert(cell)
     }
 
     pub fn new() -> Self {
         let mut env = Self {
-            memory: RefCell::new(Slab::<Cell>::with_capacity(1024)),
+            memory: Memory {
+                state: RefCell::new(Inner {
+                    mem: Slab::<Cell>::with_capacity(1024),
+                    last_stack_frame_idx: 0,
+                    cycle_count: 0,
+                }),
+            },
             nil_key: 0,
             internal_symbols_key: 0,
             namespaces_idx: 0,
             stack_frames: 0,
             functions: HashMap::new(),
-            cycle_count: RefCell::new(0),
         };
         env.nil_key = env.allocate_nil() as u64;
         env.internal_symbols_key = env.allocate_symbol(Some("_lisprs"), env.nil_key).ptr();
@@ -155,9 +204,9 @@ impl LispEnv {
     pub fn append_property_to_stack(&self, prop_name_ptr: u64, prop_val: u64) -> u64 {
         let stack_tail_car = {
             let last_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
-            let last_frame_ptr = self.memory.borrow()[last_slot].car;
+            let last_frame_ptr = self.memory.borrow_mem(last_slot).cell.car;
             trace!("Will append to stack idx {}", ptr(last_frame_ptr));
-            self.memory.borrow()[ptr(last_frame_ptr)].car
+            self.memory.borrow_mem(ptr(last_frame_ptr)).cell.car
         };
 
         let symbol_map = Symbol::as_symbol(stack_tail_car, self);
@@ -165,14 +214,14 @@ impl LispEnv {
     }
 
     pub(crate) fn print_memory(&self) {
-        for (idx, cell) in &*self.memory.borrow() {
+        for (idx, cell) in &self.memory.state.borrow().mem {
             println!("{}: {:?}", idx, cell);
         }
     }
 
     /// Returns the size of the used memory, in bytes
     pub(crate) fn memory_size(&self) -> usize {
-        self.memory.borrow().len() * 16
+        self.memory.state.borrow().mem.len() * std::mem::size_of::<Cell>()
         // counts the number of cells, with a single cell containing 2 * u64
     }
 
@@ -190,12 +239,12 @@ impl LispEnv {
         }
 
         let mut previous_cell_idx = ptr(list_ptr);
-        let mem = self.memory.borrow();
-        let mut cell_cdr = mem[previous_cell_idx].cdr;
+        let mem = self.memory.state.borrow();
+        let mut cell_cdr = mem.mem[previous_cell_idx].cdr;
 
         while cell_cdr != 0 {
             previous_cell_idx = ptr(cell_cdr);
-            cell_cdr = mem[previous_cell_idx].cdr;
+            cell_cdr = mem.mem[previous_cell_idx].cdr;
         }
 
         return previous_cell_idx;
@@ -205,11 +254,11 @@ impl LispEnv {
         if !is_pointer(list_ptr) {
             return 0;
         }
-        let mut cell_cdr = self.memory.borrow()[ptr(list_ptr)].cdr;
+        let mut cell_cdr = self.memory.borrow_mem(ptr(list_ptr)).cell.cdr;
 
         let mut len = 1;
         while cell_cdr != 0 {
-            cell_cdr = self.memory.borrow()[ptr(cell_cdr)].cdr;
+            cell_cdr = self.memory.borrow_mem(ptr(cell_cdr)).cell.cdr;
             len += 1;
         }
 
@@ -284,13 +333,13 @@ mod tests {
         let env = LispEnv::new();
         assert_ne!(0, env.internal_symbols_key);
 
-        let scope_root = &env.memory.borrow()[ptr(env.internal_symbols_key)];
-        assert_eq!(0, scope_root.cdr);
-        assert!(is_pointer(scope_root.car));
+        let scope_root = env.memory.borrow_mem(ptr(env.internal_symbols_key));
+        assert_eq!(0, scope_root.cell.cdr);
+        assert!(is_pointer(scope_root.cell.car));
 
-        let scope_name = &env.memory.borrow()[ptr(scope_root.car)];
-        assert_ne!(0, scope_name.car);
-        assert_eq!(Cell::encode_symbol_name("_lisprs").0, scope_name.cdr);
+        let scope_name = env.memory.borrow_mem(ptr(scope_root.cell.car));
+        assert_ne!(0, scope_name.cell.car);
+        assert_eq!(Cell::encode_symbol_name("_lisprs").0, scope_name.cell.cdr);
         assert!(env.global_map().property_count() > 0);
     }
 
@@ -299,10 +348,10 @@ mod tests {
         let env = LispEnv::new();
         let symbol = env.allocate_symbol(Some("symb"), 0);
 
-        let original_mem_size = env.memory.borrow().len();
+        let original_mem_size = env.memory.state.borrow().mem.len();
         let name_ptr = Cell::encode_symbol_name("foo").0;
         let prop_slot = symbol.append_property(name_ptr, number_pointer(10));
-        assert_eq!(original_mem_size + 3, env.memory.borrow().len());
+        assert_eq!(original_mem_size + 3, env.memory.state.borrow().mem.len());
         // 2 cells for the prop and its value, and another cell for the "_lisprs" name that's moved
         // in a separate cell
         assert_ne!(0, prop_slot);
@@ -316,20 +365,23 @@ mod tests {
         //          -> [foo_cell_ptr | nil]
         //                -> [10 | "foo"]
 
-        let root_cell = &env.memory.borrow()[symbol.idx()];
-        assert_eq!(0, root_cell.cdr);
-        assert_eq!(symbol.idx() + 3, ptr(root_cell.car));
+        let root_cell = env.memory.borrow_mem(symbol.idx());
+        assert_eq!(0, root_cell.cell.cdr);
+        assert_eq!(symbol.idx() + 3, ptr(root_cell.cell.car));
 
-        let symbol_name_cell = &env.memory.borrow()[symbol.idx() + 3];
-        assert_eq!(Cell::encode_symbol_name("symb").0, symbol_name_cell.cdr);
+        let symbol_name_cell = env.memory.borrow_mem(symbol.idx() + 3);
+        assert_eq!(
+            Cell::encode_symbol_name("symb").0,
+            symbol_name_cell.cell.cdr
+        );
 
-        let prop_slot_cell = &env.memory.borrow()[ptr(symbol_name_cell.car)];
-        assert_eq!(0, prop_slot_cell.cdr);
+        let prop_slot_cell = env.memory.borrow_mem(ptr(symbol_name_cell.cell.car));
+        assert_eq!(0, prop_slot_cell.cell.cdr);
 
-        let prop_ptr = env.memory.borrow()[ptr(prop_slot)].car;
-        let prop_cell = &env.memory.borrow()[ptr(prop_ptr)];
-        assert_eq!(10, as_number(prop_cell.car));
-        assert_eq!(Cell::encode_symbol_name("foo").0, prop_cell.cdr);
+        let prop_ptr = env.memory.borrow_mem(ptr(prop_slot)).cell.car;
+        let prop_cell = env.memory.borrow_mem(ptr(prop_ptr));
+        assert_eq!(10, as_number(prop_cell.cell.car));
+        assert_eq!(Cell::encode_symbol_name("foo").0, prop_cell.cell.cdr);
         assert_eq!(1, symbol.property_count());
     }
 
@@ -355,26 +407,29 @@ mod tests {
         //          -> [foo_cell_ptr | bar_cell_slot] -> [bar_cell_ptr | nil]
         //                   -> [10 | "foo"]                -> [42 | "bar"]
 
-        let first_prop_ptr = env.memory.borrow()[ptr(first_prop_slot)].car;
-        let foo_cell = &env.memory.borrow()[ptr(first_prop_ptr)];
-        assert_eq!(first_name_ptr, foo_cell.cdr);
-        assert_eq!(10, as_number(foo_cell.car));
+        let first_prop_ptr = env.memory.borrow_mem(ptr(first_prop_slot)).cell.car;
+        let foo_cell = &env.memory.borrow_mem(ptr(first_prop_ptr));
+        assert_eq!(first_name_ptr, foo_cell.cell.cdr);
+        assert_eq!(10, as_number(foo_cell.cell.car));
 
-        let second_prop_ptr = env.memory.borrow()[ptr(second_prop_slot)].car;
-        let bar_cell = &env.memory.borrow()[ptr(second_prop_ptr)];
-        assert_eq!(second_name_ptr, bar_cell.cdr);
-        assert_eq!(42, as_number(bar_cell.car));
+        let second_prop_ptr = env.memory.borrow_mem(ptr(second_prop_slot)).cell.car;
+        let bar_cell = &env.memory.borrow_mem(ptr(second_prop_ptr));
+        assert_eq!(second_name_ptr, bar_cell.cell.cdr);
+        assert_eq!(42, as_number(bar_cell.cell.car));
 
-        let property_root_ptr = env.memory.borrow()[symbol.idx()].car;
-        let property_root_cell = &env.memory.borrow()[ptr(property_root_ptr)];
-        assert_eq!(Cell::encode_symbol_name("symb").0, property_root_cell.cdr);
+        let property_root_ptr = env.memory.borrow_mem(symbol.idx()).cell.car;
+        let property_root_cell = env.memory.borrow_mem(ptr(property_root_ptr));
+        assert_eq!(
+            Cell::encode_symbol_name("symb").0,
+            property_root_cell.cell.cdr
+        );
 
-        let foo_slot_cell = &env.memory.borrow()[ptr(property_root_cell.car)];
-        assert_eq!(first_prop_ptr, foo_slot_cell.car);
+        let foo_slot_cell = &env.memory.borrow_mem(ptr(property_root_cell.cell.car));
+        assert_eq!(first_prop_ptr, foo_slot_cell.cell.car);
 
-        let bar_slot_cell = &env.memory.borrow()[ptr(foo_slot_cell.cdr)];
-        assert_eq!(second_prop_ptr, bar_slot_cell.car);
-        assert_eq!(0, bar_slot_cell.cdr);
+        let bar_slot_cell = &env.memory.borrow_mem(ptr(foo_slot_cell.cell.cdr));
+        assert_eq!(second_prop_ptr, bar_slot_cell.cell.car);
+        assert_eq!(0, bar_slot_cell.cell.cdr);
     }
 
     #[test]
@@ -449,10 +504,10 @@ mod tests {
         //                                      -> [42 | bae]
 
         assert_ne!(0, nested_prop_slot);
-        let nested_prop_ptr = env.memory.borrow()[ptr(nested_prop_slot)].car;
-        let bar_cell = &env.memory.borrow()[ptr(nested_prop_ptr)];
-        assert_eq!(42, as_number(bar_cell.car));
-        assert_eq!(Cell::encode_symbol_name("bar").0, bar_cell.cdr);
+        let nested_prop_ptr = env.memory.borrow_mem(ptr(nested_prop_slot)).cell.car;
+        let bar_cell = &env.memory.borrow_mem(ptr(nested_prop_ptr));
+        assert_eq!(42, as_number(bar_cell.cell.car));
+        assert_eq!(Cell::encode_symbol_name("bar").0, bar_cell.cell.cdr);
     }
 
     #[test]
@@ -480,7 +535,7 @@ mod tests {
     fn get_list_length() {
         let mut env = LispEnv::new();
         let list_head = env.parse("(1 2)").unwrap();
-        let first_statement = env.memory.borrow()[list_head].car;
+        let first_statement = env.memory.borrow_mem(list_head).cell.car;
         assert_eq!(2, env.get_list_length(first_statement));
     }
 
@@ -488,18 +543,18 @@ mod tests {
     fn get_last_list_idx_single_cell() {
         let mut env = LispEnv::new();
         let list_head = env.parse("(1)").unwrap();
-        let first_statement = env.memory.borrow()[list_head].car;
+        let first_statement = env.memory.borrow_mem(list_head).cell.car;
         let last_idx = env.get_last_cell_idx(first_statement);
-        assert_eq!(1, as_number(env.memory.borrow_mut()[last_idx].car));
+        assert_eq!(1, as_number(env.memory.borrow_mem(last_idx).cell.car));
     }
 
     #[test]
     fn get_last_list_idx_many_items() {
         let mut env = LispEnv::new();
         let list_head = env.parse("(1 2 3)").unwrap();
-        let first_statement = env.memory.borrow()[list_head].car;
+        let first_statement = env.memory.borrow_mem(list_head).cell.car;
         let last_idx = env.get_last_cell_idx(first_statement);
-        assert_eq!(3, as_number(env.memory.borrow_mut()[last_idx].car));
+        assert_eq!(3, as_number(env.memory.borrow_mem(last_idx).cell.car));
     }
 
     #[test]
@@ -513,12 +568,12 @@ mod tests {
     #[test]
     fn root_stack_points_frame_points_to_global_scope() {
         let env = LispEnv::new();
-        let root_stack_cell = &env.memory.borrow()[env.stack_frames];
-        assert_eq!(0, root_stack_cell.cdr);
-        assert_ne!(env.internal_symbols_key, root_stack_cell.car);
-        assert!(is_pointer(root_stack_cell.car));
+        let root_stack_cell = env.memory.borrow_mem(env.stack_frames);
+        assert_eq!(0, root_stack_cell.cell.cdr);
+        assert_ne!(env.internal_symbols_key, root_stack_cell.cell.car);
+        assert!(is_pointer(root_stack_cell.cell.car));
 
-        let frame_cell = &env.memory.borrow()[ptr(root_stack_cell.car)];
-        assert_eq!(frame_cell.car, env.internal_symbols_key);
+        let frame_cell = env.memory.borrow_mem(ptr(root_stack_cell.cell.car));
+        assert_eq!(frame_cell.cell.car, env.internal_symbols_key);
     }
 }

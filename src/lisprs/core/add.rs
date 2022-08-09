@@ -17,7 +17,7 @@ impl LispFunction for Add {
     ) -> Result<u64, super::super::evaluator::Error> {
         let sum = {
             let mut sum = 0;
-            let mut current_cell = env.memory.borrow()[args_idx].clone();
+            let mut current_cell = env.memory.borrow_mem(args_idx).cell.clone();
 
             loop {
                 trace!("+ current cell: {:?}", current_cell);
@@ -33,7 +33,7 @@ impl LispFunction for Add {
                 if current_cell.cdr == 0 {
                     break;
                 }
-                current_cell = env.memory.borrow()[current_cell.cdr_ptr()].clone();
+                current_cell = env.memory.borrow_mem(current_cell.cdr_ptr()).cell.clone();
             }
 
             sum

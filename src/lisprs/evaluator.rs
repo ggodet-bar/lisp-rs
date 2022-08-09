@@ -1,5 +1,5 @@
 use crate::lisprs::cell::Cell;
-use crate::lisprs::lisp_env::{GC_PERIOD, MAX_CYCLES};
+use crate::lisprs::lisp_env::MAX_CYCLES;
 use crate::lisprs::symbol::Symbol;
 use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
@@ -23,11 +23,11 @@ impl LispEnv {
             unimplemented!("Param/arg mismatch");
         }
         let (first_param, first_arg) = {
-            let mem = self.memory.borrow();
-            let first_param = mem[ptr(params_list_ptr)].car;
+            let mem = self.memory.state.borrow();
+            let first_param = mem.mem[ptr(params_list_ptr)].car;
             // Param is probably a symbol, so we dereference its name
-            let first_param = mem[ptr(first_param)].car;
-            let first_arg = mem[ptr(arg_list_ptr)].car;
+            let first_param = mem.mem[ptr(first_param)].car;
+            let first_arg = mem.mem[ptr(arg_list_ptr)].car;
 
             (first_param, first_arg)
         };
@@ -49,11 +49,11 @@ impl LispEnv {
 
     fn evaluate_symbol(&self, statement: u64) -> Result<u64, Error> {
         let (symbol_cell_car, stack_symbols) = {
-            let mem = self.memory.borrow();
-            let symbol_cell_car = mem[ptr(statement)].car;
+            let mem = self.memory.state.borrow();
+            let symbol_cell_car = mem.mem[ptr(statement)].car;
             let last_stack_idx = self.get_last_cell_idx(as_ptr(self.stack_frames));
-            let last_frame_ptr = mem[last_stack_idx].car;
-            let stack_symbols = Symbol::as_symbol(mem[ptr(last_frame_ptr)].car, self);
+            let last_frame_ptr = mem.mem[last_stack_idx].car;
+            let stack_symbols = Symbol::as_symbol(mem.mem[ptr(last_frame_ptr)].car, self);
 
             (symbol_cell_car, stack_symbols)
         };
@@ -75,7 +75,7 @@ impl LispEnv {
     }
 
     fn evaluate_list(&self, statement: u64) -> Result<u64, Error> {
-        let list_head = self.memory.borrow()[ptr(statement)].clone();
+        let list_head = self.memory.borrow_mem(ptr(statement)).cell.clone();
         if is_number(list_head.car) {
             let mut previous_cell_idx = 0_usize;
             let mut current_cell = list_head;
@@ -90,14 +90,14 @@ impl LispEnv {
                     new_head = new_cell_idx;
                 }
                 if previous_cell_idx != 0 {
-                    let mut previous_cell = &mut self.memory.borrow_mut()[previous_cell_idx];
-                    previous_cell.cdr = as_ptr(new_cell_idx);
+                    let mut previous_cell = &mut self.memory.borrow_mem_mut(previous_cell_idx);
+                    previous_cell.cell.cdr = as_ptr(new_cell_idx);
                 }
 
                 if current_cell.cdr == 0 {
                     break;
                 } else {
-                    current_cell = self.memory.borrow()[ptr(current_cell.cdr)].clone();
+                    current_cell = self.memory.borrow_mem(ptr(current_cell.cdr)).cell.clone();
                     previous_cell_idx = new_cell_idx;
                 }
             }
@@ -105,12 +105,12 @@ impl LispEnv {
             Ok(as_ptr(new_head))
         } else if is_symbol_ptr(list_head.car) {
             let (frame_symbols, symbol_name_ptr) = {
-                let mem = self.memory.borrow();
-                let symbol_name_ptr = mem[ptr(list_head.car)].car;
+                let mem = self.memory.state.borrow();
+                let symbol_name_ptr = mem.mem[ptr(list_head.car)].car;
                 // let symbol_name = Cell::decode_symbol_name(symbol_name_ptr);
                 let current_frame_slot = self.get_last_cell_idx(as_ptr(self.stack_frames));
-                let current_frame = mem[current_frame_slot].car;
-                let frame_symbols = Symbol::as_symbol(mem[ptr(current_frame)].car, self);
+                let current_frame = mem.mem[current_frame_slot].car;
+                let frame_symbols = Symbol::as_symbol(mem.mem[ptr(current_frame)].car, self);
                 (frame_symbols, symbol_name_ptr)
             };
             trace!("Resolving symbol {}", symbol_name_ptr);
@@ -128,7 +128,7 @@ impl LispEnv {
                 if is_pointer(value_or_func) {
                     // TODO For now we won't bother that `value_or_func` should probably be a
                     //      symbol pointer, since we have [val | name]
-                    let value_cell = self.memory.borrow()[ptr(value_or_func)].clone();
+                    let value_cell = self.memory.borrow_mem(ptr(value_or_func)).cell.clone();
                     trace!("Target cell: {:?}", value_cell);
                     if is_pointer(value_cell.car)
                         && is_pointer(value_cell.cdr)
@@ -160,8 +160,8 @@ impl LispEnv {
     }
 
     pub(crate) fn evaluate_atom(&self, statement: u64) -> Result<u64, Error> {
-        *self.cycle_count.borrow_mut() += 1;
-        if MAX_CYCLES != 0 && *self.cycle_count.borrow() > MAX_CYCLES {
+        self.memory.state.borrow_mut().cycle_count += 1;
+        if MAX_CYCLES != 0 && self.memory.state.borrow().cycle_count > MAX_CYCLES {
             panic!("Forced exit");
         }
 
@@ -243,14 +243,14 @@ mod tests {
         assert!(is_pointer(result));
         assert_eq!(3, env.get_list_length(result));
 
-        let list = &env.memory.borrow()[ptr(result)];
-        assert_eq!(number_pointer(1), list.car);
+        let list = env.memory.borrow_mem(ptr(result));
+        assert_eq!(number_pointer(1), list.cell.car);
 
-        let entry = &env.memory.borrow()[ptr(list.cdr)];
-        assert_eq!(number_pointer(2), entry.car);
+        let entry = env.memory.borrow_mem(ptr(list.cell.cdr));
+        assert_eq!(number_pointer(2), entry.cell.car);
 
-        let entry = &env.memory.borrow()[ptr(entry.cdr)];
-        assert_eq!(number_pointer(3), entry.car);
+        let entry = env.memory.borrow_mem(ptr(entry.cell.cdr));
+        assert_eq!(number_pointer(3), entry.cell.car);
     }
 
     #[test]
@@ -263,12 +263,12 @@ mod tests {
         let result = result.unwrap();
         assert!(is_pointer(result));
         assert_eq!(2, env.get_list_length(result));
-        let list_head = &env.memory.borrow()[ptr(result)];
-        assert_eq!(number_pointer(2), list_head.car);
+        let list_head = &env.memory.borrow_mem(ptr(result));
+        assert_eq!(number_pointer(2), list_head.cell.car);
 
-        let list_tail = &env.memory.borrow()[ptr(list_head.cdr)];
-        assert!(is_number(list_tail.car));
-        assert_eq!(number_pointer(18), list_tail.car);
+        let list_tail = &env.memory.borrow_mem(ptr(list_head.cell.cdr));
+        assert!(is_number(list_tail.cell.car));
+        assert_eq!(number_pointer(18), list_tail.cell.car);
     }
 
     #[test]
@@ -308,21 +308,21 @@ mod tests {
             .get_property_value_by_ptr(Cell::encode_symbol_name("foo").0)
         {
             assert_eq!(result, foo_def);
-            let foo_def_cell = &env.memory.borrow()[ptr(foo_def)];
-            assert!(is_pointer(foo_def_cell.car));
-            let arg_list_cell = &env.memory.borrow()[ptr(foo_def_cell.car)];
-            assert!(is_pointer(arg_list_cell.car));
-            assert_eq!(1, env.get_list_length(arg_list_cell.car));
+            let foo_def_cell = &env.memory.borrow_mem(ptr(foo_def));
+            assert!(is_pointer(foo_def_cell.cell.car));
+            let arg_list_cell = &env.memory.borrow_mem(ptr(foo_def_cell.cell.car));
+            assert!(is_pointer(arg_list_cell.cell.car));
+            assert_eq!(1, env.get_list_length(arg_list_cell.cell.car));
 
-            let first_arg = &env.memory.borrow()[ptr(arg_list_cell.car)];
-            assert_eq!("X", Cell::decode_symbol_name(first_arg.car));
+            let first_arg = &env.memory.borrow_mem(ptr(arg_list_cell.cell.car));
+            assert_eq!("X", Cell::decode_symbol_name(first_arg.cell.car));
 
-            assert_ne!(0, foo_def_cell.cdr);
-            assert!(is_pointer(foo_def_cell.cdr));
-            assert!(is_symbol_ptr(foo_def_cell.cdr));
+            assert_ne!(0, foo_def_cell.cell.cdr);
+            assert!(is_pointer(foo_def_cell.cell.cdr));
+            assert!(is_symbol_ptr(foo_def_cell.cell.cdr));
 
-            let prog_body = &env.memory.borrow()[ptr(foo_def_cell.cdr)];
-            assert_eq!("X", Cell::decode_symbol_name(prog_body.car));
+            let prog_body = &env.memory.borrow_mem(ptr(foo_def_cell.cell.cdr));
+            assert_eq!("X", Cell::decode_symbol_name(prog_body.cell.car));
         } else {
             panic!("inconsistent state");
         }
@@ -339,7 +339,7 @@ mod tests {
         // Returns the property SLOT, not the value itself!
         assert_eq!(
             "NIL",
-            Cell::decode_symbol_name(env.memory.borrow()[ptr(result)].car)
+            Cell::decode_symbol_name(env.memory.borrow_mem(ptr(result)).cell.car)
         );
 
         let program = env.parse("X").unwrap();

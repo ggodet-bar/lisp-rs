@@ -15,8 +15,8 @@ impl LispFunction for Sub {
         env: &LispEnv,
     ) -> Result<u64, super::super::evaluator::Error> {
         let (first_term, second_term) = {
-            let first_arg_cell = &env.memory.borrow()[arg_idx];
-            let second_arg_cell = &env.memory.borrow()[ptr(first_arg_cell.cdr)];
+            let first_arg_cell = env.memory.borrow_mem(arg_idx).cell;
+            let second_arg_cell = env.memory.borrow_mem(ptr(first_arg_cell.cdr)).cell;
 
             (first_arg_cell.car, second_arg_cell.car)
         };

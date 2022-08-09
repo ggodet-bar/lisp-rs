@@ -17,15 +17,15 @@ impl LispFunction for Eq {
         env: &LispEnv,
     ) -> Result<u64, super::super::evaluator::Error> {
         let (first_arg_slot_car, second_arg_slot_car) = {
-            let memory = env.memory.borrow();
-            let first_arg_slot = &memory[args_idx];
+            let memory = env.memory.state.borrow();
+            let first_arg_slot = &memory.mem[args_idx];
             println!("arg cell: {:?}", first_arg_slot);
             // TODO List iterator!!!
             if first_arg_slot.cdr == 0 {
                 unimplemented!()
             }
 
-            let second_arg_slot = &memory[ptr(first_arg_slot.cdr)];
+            let second_arg_slot = &memory.mem[ptr(first_arg_slot.cdr)];
             if second_arg_slot.cdr != 0 {
                 unimplemented!()
             }
@@ -87,8 +87,8 @@ impl Eq {
                 return false;
             }
             // Recursive call
-            let left_cell = env.memory.borrow()[ptr(left)].to_owned();
-            let right_cell = env.memory.borrow()[ptr(right)].to_owned();
+            let left_cell = env.memory.borrow_mem(ptr(left)).cell.to_owned();
+            let right_cell = env.memory.borrow_mem(ptr(right)).cell.to_owned();
             pending_cells.push_back((left_cell, right_cell));
             true
         } else {

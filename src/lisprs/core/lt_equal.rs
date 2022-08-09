@@ -15,9 +15,9 @@ impl LispFunction for LtEqual {
         env: &LispEnv,
     ) -> Result<u64, super::super::evaluator::Error> {
         let (first_term, second_term) = {
-            let mem = env.memory.borrow();
-            let first_arg_cell = &mem[arg_idx];
-            let second_arg_cell = &mem[ptr(first_arg_cell.cdr)];
+            let mem = env.memory.state.borrow();
+            let first_arg_cell = &mem.mem[arg_idx];
+            let second_arg_cell = &mem.mem[ptr(first_arg_cell.cdr)];
 
             (first_arg_cell.car, second_arg_cell.car)
         };

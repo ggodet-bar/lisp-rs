@@ -15,16 +15,14 @@ impl<'a> List<'a> {
     pub fn iter(&self) -> CellIter {
         CellIter {
             next_cell_ptr: None,
-            root_cell: self.env.memory.borrow()[ptr(self.ptr)].clone(),
-            borrowed_mem: self.env.memory.borrow(),
+            root_cell: self.env.memory.borrow_mem(ptr(self.ptr)),
         }
     }
 
     pub fn iter_slots(&self) -> CellSlotIter {
         CellSlotIter {
             next_cell_ptr: None,
-            root_cell: self.env.memory.borrow()[ptr(self.ptr)].clone(),
-            borrowed_mem: self.env.memory.borrow(),
+            root_cell: self.env.memory.borrow_mem(ptr(self.ptr)),
         }
     }
 }

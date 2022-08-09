@@ -1,8 +1,10 @@
 use crate::lisprs::cell::Cell;
+use crate::lisprs::lisp_env::BorrowedCell;
 use crate::lisprs::list::List;
 use crate::lisprs::util::{as_ptr, is_number, is_pointer, is_symbol_ptr, ptr};
 use crate::lisprs::LispEnv;
 use log::*;
+use std::cell::Ref;
 
 pub struct Symbol<'a> {
     ptr: u64,
@@ -37,19 +39,33 @@ impl<'a> Symbol<'a> {
     }
 
     pub fn deallocate(self) {
-        let root_cell_car = self.env.memory.borrow_mut().remove(self.idx()).car;
+        let root_cell_car = self
+            .env
+            .memory
+            .state
+            .borrow_mut()
+            .mem
+            .remove(self.idx())
+            .car;
 
         if is_pointer(root_cell_car) {
-            let symbol_list_ptr = self.env.memory.borrow_mut().remove(ptr(root_cell_car)).car;
+            let symbol_list_ptr = self
+                .env
+                .memory
+                .state
+                .borrow_mut()
+                .mem
+                .remove(ptr(root_cell_car))
+                .car;
             let symbol_list = List::as_list(symbol_list_ptr, self.env);
             let list_values = symbol_list.iter_slots().collect::<Vec<(u64, u64)>>();
-            let mut mem = self.env.memory.borrow_mut();
+            let mut mem = self.env.memory.state.borrow_mut();
 
             for (list_val, list_slot) in list_values {
                 if is_pointer(list_val) {
-                    mem.remove(ptr(list_val));
+                    mem.mem.remove(ptr(list_val));
                     if list_slot != 0 {
-                        mem.remove(ptr(list_slot));
+                        mem.mem.remove(ptr(list_slot));
                     }
                 }
             }
@@ -87,7 +103,11 @@ impl<'a> Symbol<'a> {
         );
         if let Some(property_slot_ptr) = self.get_property_by_ptr(prop_name_ptr) {
             trace!("Replacing symbol value at {}", ptr(property_slot_ptr));
-            self.env.memory.borrow_mut()[ptr(property_slot_ptr)].car = prop_val;
+            self.env
+                .memory
+                .borrow_mem_mut(ptr(property_slot_ptr))
+                .cell
+                .car = prop_val;
 
             return property_slot_ptr;
         }
@@ -95,9 +115,9 @@ impl<'a> Symbol<'a> {
         let prop_slot_idx = self.env.allocate_empty_cell();
         let prop_cell_idx = self.env.allocate_empty_cell();
         {
-            let mut mem = self.env.memory.borrow_mut();
-            mem[prop_slot_idx].set_car_pointer(prop_cell_idx);
-            let mut prop_cell = &mut mem[prop_cell_idx];
+            let mut mem = self.env.memory.state.borrow_mut();
+            mem.mem[prop_slot_idx].set_car_pointer(prop_cell_idx);
+            let mut prop_cell = &mut mem.mem[prop_cell_idx];
             prop_cell.car = prop_val;
             prop_cell.cdr = prop_name_ptr;
         }
@@ -106,16 +126,20 @@ impl<'a> Symbol<'a> {
             let properties_head_ptr = self.properties_ptr();
             if properties_head_ptr != 0 {
                 let last_prop_cell_idx = self.env.get_last_cell_idx(properties_head_ptr);
-                self.env.memory.borrow_mut()[last_prop_cell_idx].set_cdr_pointer(prop_slot_idx);
+                self.env
+                    .memory
+                    .borrow_mem_mut(last_prop_cell_idx)
+                    .cell
+                    .set_cdr_pointer(prop_slot_idx);
             } else {
                 // in that case root_cell_car contains the symbol name
                 // Then we need to rearrange the cell to describe a non-unitary symbol
-                let root_cell_name = self.env.memory.borrow()[self.idx()].car;
+                let root_cell_name = self.env.memory.borrow_mem(self.idx()).cell.car;
                 let name_cell_idx = self.env.insert_cell(Cell {
                     car: as_ptr(prop_slot_idx),
                     cdr: root_cell_name,
                 });
-                self.env.memory.borrow_mut()[self.idx()].car = as_ptr(name_cell_idx);
+                self.env.memory.borrow_mem_mut(self.idx()).cell.car = as_ptr(name_cell_idx);
             }
         };
 
@@ -123,14 +147,14 @@ impl<'a> Symbol<'a> {
     }
 
     pub fn name(&self) -> Option<String> {
-        let root_cell = &self.env.memory.borrow()[self.idx()];
-        if root_cell.car == 0 {
+        let root_cell = &self.env.memory.borrow_mem(self.idx());
+        if root_cell.cell.car == 0 {
             None
-        } else if is_number(root_cell.car) {
-            Some(Cell::decode_symbol_name(root_cell.car))
+        } else if is_number(root_cell.cell.car) {
+            Some(Cell::decode_symbol_name(root_cell.cell.car))
         } else {
-            let prop_cell = &self.env.memory.borrow()[ptr(root_cell.car)];
-            Some(Cell::decode_symbol_name(prop_cell.cdr)) // assuming a short number name
+            let prop_cell = &self.env.memory.borrow_mem(ptr(root_cell.cell.car));
+            Some(Cell::decode_symbol_name(prop_cell.cell.cdr)) // assuming a short number name
         }
     }
 
@@ -145,11 +169,11 @@ impl<'a> Symbol<'a> {
             return None;
         }
 
-        let mem = self.env.memory.borrow();
-        let prop_list_head = &mem[ptr(property_head_ptr)];
+        let mem = self.env.memory.state.borrow();
+        let prop_list_head = BorrowedCell::new(Ref::clone(&mem), ptr(property_head_ptr));
         prop_list_head
-            .iter(self.env)
-            .find(|property_ptr| name_ptr == mem[ptr(*property_ptr)].cdr)
+            .iter()
+            .find(|property_ptr| name_ptr == mem.mem[ptr(*property_ptr)].cdr)
     }
 
     pub fn get_property_by_name(&self, name: &str) -> Option<u64> {
@@ -163,7 +187,7 @@ impl<'a> Symbol<'a> {
     /// Returns an optional pointer to the property value cell
     pub fn get_property_value_by_ptr(&self, name_ptr: u64) -> Option<u64> {
         self.get_property_by_ptr(name_ptr)
-            .map(|slot_car| self.env.memory.borrow()[ptr(slot_car)].car)
+            .map(|slot_car| self.env.memory.borrow_mem(ptr(slot_car)).cell.car)
     }
 
     pub fn ptr(&self) -> u64 {
@@ -184,13 +208,13 @@ impl<'a> Symbol<'a> {
     ///                -> [10 | "foo"]
     ///```
     pub fn properties_ptr(&self) -> u64 {
-        let mem = self.env.memory.borrow();
-        let root_cell_car = mem[self.idx()].car;
+        let mem = self.env.memory.state.borrow();
+        let root_cell_car = mem.mem[self.idx()].car;
         if root_cell_car == 0 || !is_pointer(root_cell_car) {
             return 0;
         }
 
-        let name_cell = &mem[ptr(root_cell_car)];
+        let name_cell = &mem.mem[ptr(root_cell_car)];
         name_cell.car
     }
 

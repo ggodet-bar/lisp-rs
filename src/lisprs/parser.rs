@@ -40,13 +40,13 @@ impl LispEnv {
                 let quote_content_ptr = self.allocate_empty_cell();
                 {
                     let quote_ptr = self.allocate_symbol(Some("quote"), 0).ptr();
-                    let quote_list_cell = &mut self.memory.borrow_mut()[quote_list_ptr];
-                    quote_list_cell.car = quote_ptr;
-                    quote_list_cell.set_cdr_pointer(quote_content_ptr)
+                    let quote_list_cell = &mut self.memory.borrow_mem_mut(quote_list_ptr);
+                    quote_list_cell.cell.car = quote_ptr;
+                    quote_list_cell.cell.set_cdr_pointer(quote_content_ptr)
                 }
                 {
-                    let quote_content_cell = &mut self.memory.borrow_mut()[quote_content_ptr];
-                    quote_content_cell.car = list_content;
+                    let quote_content_cell = &mut self.memory.borrow_mem_mut(quote_content_ptr);
+                    quote_content_cell.cell.car = list_content;
                 }
 
                 as_ptr(quote_list_ptr)
@@ -74,8 +74,8 @@ impl LispEnv {
             }
 
             if list_tail_ptr != 0 {
-                let mut last_cell = &mut self.memory.borrow_mut()[list_tail_ptr];
-                last_cell.cdr = as_ptr(new_cell_idx);
+                let mut last_cell = &mut self.memory.borrow_mem_mut(list_tail_ptr);
+                last_cell.cell.cdr = as_ptr(new_cell_idx);
             }
 
             list_tail_ptr = new_cell_idx;
@@ -110,7 +110,8 @@ impl LispEnv {
             }
 
             if current_statement_ptr != 0 {
-                self.memory.borrow_mut()[current_statement_ptr].cdr = as_ptr(parsed_statements_ptr);
+                self.memory.borrow_mem_mut(current_statement_ptr).cell.cdr =
+                    as_ptr(parsed_statements_ptr);
             }
 
             current_statement_ptr = parsed_statements_ptr;
@@ -134,7 +135,7 @@ mod tests {
 
         let statements = result.unwrap();
         assert_eq!(1, env.get_list_length(as_ptr(statements)));
-        assert_eq!(0_u64, env.memory.borrow()[statements].car);
+        assert_eq!(0_u64, env.memory.borrow_mem(statements).cell.car);
     }
 
     #[test]
@@ -146,58 +147,64 @@ mod tests {
         let result = result.unwrap();
         assert_eq!(1, env.get_list_length(as_ptr(result)));
 
-        let statement = &env.memory.borrow()[result];
-        assert!(is_pointer(statement.car));
+        let statement = env.memory.borrow_mem(result);
+        assert!(is_pointer(statement.cell.car));
 
-        let cell = &env.memory.borrow()[ptr(statement.car)];
-        assert!(cell.is_list());
-        assert!(is_symbol_ptr(cell.car));
+        let cell = env.memory.borrow_mem(ptr(statement.cell.car));
+        assert!(cell.cell.is_list());
+        assert!(is_symbol_ptr(cell.cell.car));
 
-        let first_element = &env.memory.borrow()[cell.car_ptr()];
-        assert!(is_number(first_element.car));
-        assert_eq!("a", Cell::decode_symbol_name(first_element.car));
+        let first_element = env.memory.borrow_mem(cell.cell.car_ptr());
+        assert!(is_number(first_element.cell.car));
+        assert_eq!("a", Cell::decode_symbol_name(first_element.cell.car));
     }
 
     #[test]
     fn parse_list_of_single_short_number() {
         let mut env = LispEnv::new();
-        let original_memory_size = env.memory.borrow().len();
+        let original_memory_size = env.memory.state.borrow().mem.len();
         let result = env.parse("(1)");
         assert!(result.is_ok());
         let result = result.unwrap();
 
         // The result payload consists of a list of a single statement, pointing at a list with a
         // single value
-        assert_eq!(original_memory_size + 2, env.memory.borrow().len());
+        assert_eq!(
+            original_memory_size + 2,
+            env.memory.state.borrow().mem.len()
+        );
 
-        let first_statement = &env.memory.borrow()[result];
-        assert!(is_pointer(first_statement.car));
+        let first_statement = env.memory.borrow_mem(result);
+        assert!(is_pointer(first_statement.cell.car));
 
-        let cell = &env.memory.borrow()[ptr(first_statement.car)];
-        assert!(cell.is_list());
-        assert_eq!(env.encode_number("1") as u64, cell.car);
-        assert_eq!(0, cell.cdr);
+        let cell = env.memory.borrow_mem(ptr(first_statement.cell.car));
+        assert!(cell.cell.is_list());
+        assert_eq!(env.encode_number("1") as u64, cell.cell.car);
+        assert_eq!(0, cell.cell.cdr);
     }
 
     #[test]
     fn parse_list_of_two_numbers() {
         let mut env = LispEnv::new();
-        let original_memory_size = env.memory.borrow().len();
+        let original_memory_size = env.memory.state.borrow().mem.len();
         let result = env.parse("(1 2)");
         assert!(result.is_ok());
-        assert_eq!(original_memory_size + 3, env.memory.borrow().len());
+        assert_eq!(
+            original_memory_size + 3,
+            env.memory.state.borrow().mem.len()
+        );
 
-        let first_statement = &env.memory.borrow()[result.unwrap()];
-        assert!(is_pointer(first_statement.car));
+        let first_statement = env.memory.borrow_mem(result.unwrap());
+        assert!(is_pointer(first_statement.cell.car));
 
-        let list_head = &env.memory.borrow()[ptr(first_statement.car)];
-        assert!(list_head.is_list());
-        assert_eq!(env.encode_number("1") as u64, list_head.car);
+        let list_head = env.memory.borrow_mem(ptr(first_statement.cell.car));
+        assert!(list_head.cell.is_list());
+        assert_eq!(env.encode_number("1") as u64, list_head.cell.car);
 
-        let list_tail = &env.memory.borrow()[list_head.cdr_ptr()];
-        assert!(list_tail.is_list());
-        assert_eq!(env.encode_number("2") as u64, list_tail.car);
-        assert_eq!(list_tail.cdr, 0);
+        let list_tail = env.memory.borrow_mem(list_head.cell.cdr_ptr());
+        assert!(list_tail.cell.is_list());
+        assert_eq!(env.encode_number("2") as u64, list_tail.cell.car);
+        assert_eq!(list_tail.cell.cdr, 0);
     }
 
     #[test]
@@ -206,19 +213,19 @@ mod tests {
         let result = env.parse("((a))");
         assert!(result.is_ok());
 
-        let first_statement = &env.memory.borrow()[result.unwrap()];
+        let first_statement = env.memory.borrow_mem(result.unwrap());
 
-        let list_head = &env.memory.borrow()[ptr(first_statement.car)];
-        assert!(is_pointer(list_head.car));
-        assert_eq!(0, list_head.cdr);
+        let list_head = env.memory.borrow_mem(ptr(first_statement.cell.car));
+        assert!(is_pointer(list_head.cell.car));
+        assert_eq!(0, list_head.cell.cdr);
 
-        let nested_list_head = &env.memory.borrow()[ptr(list_head.car)];
-        assert!(nested_list_head.is_list());
-        assert!(is_symbol_ptr(nested_list_head.car));
-        assert_eq!(0, nested_list_head.cdr);
+        let nested_list_head = env.memory.borrow_mem(ptr(list_head.cell.car));
+        assert!(nested_list_head.cell.is_list());
+        assert!(is_symbol_ptr(nested_list_head.cell.car));
+        assert_eq!(0, nested_list_head.cell.cdr);
 
-        let symbol = &env.memory.borrow()[ptr(nested_list_head.car)];
-        assert_eq!("a", Cell::decode_symbol_name(symbol.car));
+        let symbol = env.memory.borrow_mem(ptr(nested_list_head.cell.car));
+        assert_eq!("a", Cell::decode_symbol_name(symbol.cell.car));
     }
 
     #[test]
@@ -227,11 +234,11 @@ mod tests {
         let result = env.parse("(1 . 2)");
         assert!(result.is_ok());
 
-        let first_statement = &env.memory.borrow()[result.unwrap()];
+        let first_statement = env.memory.borrow_mem(result.unwrap());
 
-        let list_head = &env.memory.borrow()[ptr(first_statement.car)];
-        assert_eq!(1, as_number(list_head.car));
-        assert_eq!(2, as_number(list_head.cdr));
+        let list_head = env.memory.borrow_mem(ptr(first_statement.cell.car));
+        assert_eq!(1, as_number(list_head.cell.car));
+        assert_eq!(2, as_number(list_head.cell.cdr));
     }
 
     #[test]
@@ -240,22 +247,25 @@ mod tests {
         let result = env.parse("(1 . (2 . (3 . NIL)))");
         assert!(result.is_ok());
 
-        let first_statement = &env.memory.borrow()[result.unwrap()];
+        let first_statement = env.memory.borrow_mem(result.unwrap());
 
-        let list_head = &env.memory.borrow()[ptr(first_statement.car)];
-        assert_eq!(1, as_number(list_head.car));
-        assert!(is_pointer(list_head.cdr));
+        let list_head = env.memory.borrow_mem(ptr(first_statement.cell.car));
+        assert_eq!(1, as_number(list_head.cell.car));
+        assert!(is_pointer(list_head.cell.cdr));
 
-        let second_cell = &env.memory.borrow()[ptr(list_head.cdr)];
-        assert_eq!(2, as_number(second_cell.car));
-        assert!(is_pointer(second_cell.cdr));
+        let second_cell = env.memory.borrow_mem(ptr(list_head.cell.cdr));
+        assert_eq!(2, as_number(second_cell.cell.car));
+        assert!(is_pointer(second_cell.cell.cdr));
 
-        let third_cell = &env.memory.borrow()[ptr(second_cell.cdr)];
-        assert_eq!(3, as_number(third_cell.car));
-        assert!(is_symbol_ptr(third_cell.cdr));
+        let third_cell = env.memory.borrow_mem(ptr(second_cell.cell.cdr));
+        assert_eq!(3, as_number(third_cell.cell.car));
+        assert!(is_symbol_ptr(third_cell.cell.cdr));
 
-        let final_symbol_cell = &env.memory.borrow()[ptr(third_cell.cdr)];
-        assert_eq!(Cell::encode_symbol_name("NIL").0, final_symbol_cell.car);
+        let final_symbol_cell = &env.memory.borrow_mem(ptr(third_cell.cell.cdr));
+        assert_eq!(
+            Cell::encode_symbol_name("NIL").0,
+            final_symbol_cell.cell.car
+        );
     }
 
     #[test]
@@ -265,19 +275,19 @@ mod tests {
         // parsed as (quote 1)
         assert!(result.is_ok());
 
-        let first_statement_ptr = env.memory.borrow()[result.unwrap()].car;
-        let first_statement = &env.memory.borrow()[ptr(first_statement_ptr)];
-        assert!(first_statement.is_list());
-        assert!(is_symbol_ptr(first_statement.car));
-        assert_ne!(0, first_statement.cdr);
+        let first_statement_ptr = env.memory.borrow_mem(result.unwrap()).cell.car;
+        let first_statement = env.memory.borrow_mem(ptr(first_statement_ptr));
+        assert!(first_statement.cell.is_list());
+        assert!(is_symbol_ptr(first_statement.cell.car));
+        assert_ne!(0, first_statement.cell.cdr);
 
-        let symbol_cell = &env.memory.borrow()[ptr(first_statement.car)];
-        assert_eq!(Cell::encode_symbol_name("quote").0, symbol_cell.car);
+        let symbol_cell = env.memory.borrow_mem(ptr(first_statement.cell.car));
+        assert_eq!(Cell::encode_symbol_name("quote").0, symbol_cell.cell.car);
 
-        let number_cell = &env.memory.borrow()[ptr(first_statement.cdr)];
-        assert!(is_number(number_cell.car));
-        assert_eq!(1, as_number(number_cell.car));
-        assert_eq!(0, number_cell.cdr);
+        let number_cell = env.memory.borrow_mem(ptr(first_statement.cell.cdr));
+        assert!(is_number(number_cell.cell.car));
+        assert_eq!(1, as_number(number_cell.cell.car));
+        assert_eq!(0, number_cell.cell.cdr);
     }
 
     #[test]
@@ -287,22 +297,25 @@ mod tests {
         assert!(result.is_ok());
         // should be rewritten as `(quote a)`
 
-        let first_statement_ptr = env.memory.borrow()[result.unwrap()].car;
-        let first_statement = &env.memory.borrow()[ptr(first_statement_ptr)];
-        assert!(first_statement.is_list());
-        assert!(is_symbol_ptr(first_statement.car));
-        assert_ne!(0, first_statement.cdr);
+        let first_statement_ptr = env.memory.borrow_mem(result.unwrap()).cell.car;
+        let first_statement = env.memory.borrow_mem(ptr(first_statement_ptr));
+        assert!(first_statement.cell.is_list());
+        assert!(is_symbol_ptr(first_statement.cell.car));
+        assert_ne!(0, first_statement.cell.cdr);
 
-        let quote_symbol_cell = &env.memory.borrow()[ptr(first_statement.car)];
-        assert_eq!(Cell::encode_symbol_name("quote").0, quote_symbol_cell.car);
+        let quote_symbol_cell = env.memory.borrow_mem(ptr(first_statement.cell.car));
+        assert_eq!(
+            Cell::encode_symbol_name("quote").0,
+            quote_symbol_cell.cell.car
+        );
 
-        let symbol_slot_cell = &env.memory.borrow()[ptr(first_statement.cdr)];
-        assert!(is_symbol_ptr(symbol_slot_cell.car));
-        assert_eq!(0, symbol_slot_cell.cdr);
+        let symbol_slot_cell = env.memory.borrow_mem(ptr(first_statement.cell.cdr));
+        assert!(is_symbol_ptr(symbol_slot_cell.cell.car));
+        assert_eq!(0, symbol_slot_cell.cell.cdr);
 
-        let symbol_cell = &env.memory.borrow()[ptr(symbol_slot_cell.car)];
-        assert_eq!("a", Cell::decode_symbol_name(symbol_cell.car));
-        assert_eq!(0, symbol_cell.cdr);
+        let symbol_cell = &env.memory.borrow_mem(ptr(symbol_slot_cell.cell.car));
+        assert_eq!("a", Cell::decode_symbol_name(symbol_cell.cell.car));
+        assert_eq!(0, symbol_cell.cell.cdr);
     }
 
     #[test]
@@ -312,23 +325,26 @@ mod tests {
         assert!(result.is_ok());
 
         env.print_memory();
-        let first_statement_ptr = env.memory.borrow()[result.unwrap()].car;
-        let first_statement = &env.memory.borrow()[ptr(first_statement_ptr)];
-        assert!(first_statement.is_list());
-        assert!(is_symbol_ptr(first_statement.car));
+        let first_statement_ptr = env.memory.borrow_mem(result.unwrap()).cell.car;
+        let first_statement = env.memory.borrow_mem(ptr(first_statement_ptr));
+        assert!(first_statement.cell.is_list());
+        assert!(is_symbol_ptr(first_statement.cell.car));
         assert_eq!(
             Cell::encode_symbol_name("quote").0,
-            env.memory.borrow()[ptr(first_statement.car)].car
+            env.memory
+                .borrow_mem(ptr(first_statement.cell.car))
+                .cell
+                .car
         );
-        assert_ne!(0, first_statement.cdr);
+        assert_ne!(0, first_statement.cell.cdr);
 
-        let symbol_slot_cell = &env.memory.borrow()[ptr(first_statement.cdr)];
-        assert!(is_symbol_ptr(symbol_slot_cell.car));
-        assert_eq!(0, symbol_slot_cell.cdr);
+        let symbol_slot_cell = env.memory.borrow_mem(ptr(first_statement.cell.cdr));
+        assert!(is_symbol_ptr(symbol_slot_cell.cell.car));
+        assert_eq!(0, symbol_slot_cell.cell.cdr);
 
-        let symbol_cell = &env.memory.borrow()[ptr(symbol_slot_cell.car)];
-        assert_eq!("a", Cell::decode_symbol_name(symbol_cell.car));
-        assert_eq!(0, symbol_cell.cdr);
+        let symbol_cell = env.memory.borrow_mem(ptr(symbol_slot_cell.cell.car));
+        assert_eq!("a", Cell::decode_symbol_name(symbol_cell.cell.car));
+        assert_eq!(0, symbol_cell.cell.cdr);
     }
 
     #[test]
@@ -338,31 +354,34 @@ mod tests {
         assert!(result.is_ok());
 
         env.print_memory();
-        let first_statement_ptr = env.memory.borrow()[result.unwrap()].car;
-        let first_statement = &env.memory.borrow()[ptr(first_statement_ptr)];
-        assert!(first_statement.is_list());
-        assert!(is_symbol_ptr(first_statement.car));
+        let first_statement_ptr = env.memory.borrow_mem(result.unwrap()).cell.car;
+        let first_statement = &env.memory.borrow_mem(ptr(first_statement_ptr));
+        assert!(first_statement.cell.is_list());
+        assert!(is_symbol_ptr(first_statement.cell.car));
         assert_eq!(
             Cell::encode_symbol_name("a").0,
-            env.memory.borrow()[ptr(first_statement.car)].car
+            env.memory
+                .borrow_mem(ptr(first_statement.cell.car))
+                .cell
+                .car
         );
 
-        let second_entry = &env.memory.borrow()[ptr(first_statement.cdr)];
-        assert!(is_symbol_ptr(second_entry.car));
+        let second_entry = &env.memory.borrow_mem(ptr(first_statement.cell.cdr));
+        assert!(is_symbol_ptr(second_entry.cell.car));
         assert_eq!(
             Cell::encode_symbol_name("a").0,
-            env.memory.borrow()[ptr(second_entry.car)].car
+            env.memory.borrow_mem(ptr(second_entry.cell.car)).cell.car
         );
 
-        let third_entry = &env.memory.borrow()[ptr(second_entry.cdr)];
-        assert!(is_symbol_ptr(third_entry.car));
+        let third_entry = &env.memory.borrow_mem(ptr(second_entry.cell.cdr));
+        assert!(is_symbol_ptr(third_entry.cell.car));
         assert_eq!(
             Cell::encode_symbol_name("a").0,
-            env.memory.borrow()[ptr(third_entry.car)].car
+            env.memory.borrow_mem(ptr(third_entry.cell.car)).cell.car
         );
 
-        assert_ne!(first_statement.car, second_entry.car);
-        assert_ne!(first_statement.car, third_entry.car);
+        assert_ne!(first_statement.cell.car, second_entry.cell.car);
+        assert_ne!(first_statement.cell.car, third_entry.cell.car);
 
         // We should actually only rationalize this when evaluating the list, otherwise we'll end up
         // having to resolve frame allocations during the parsing phase...
@@ -469,10 +488,10 @@ mod tests {
         let result = result.unwrap();
         assert_eq!(2, env.get_list_length(as_ptr(result)));
 
-        let statements = &env.memory.borrow()[result];
-        assert_eq!(3, env.get_list_length(statements.car));
+        let statements = env.memory.borrow_mem(result);
+        assert_eq!(3, env.get_list_length(statements.cell.car));
 
-        let second_statement = &env.memory.borrow()[ptr(statements.cdr)];
-        assert_eq!(3, env.get_list_length(second_statement.car));
+        let second_statement = env.memory.borrow_mem(ptr(statements.cell.cdr));
+        assert_eq!(3, env.get_list_length(second_statement.cell.car));
     }
 }
